@@ -150,14 +150,39 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun openPdf(notice: Notice) {
-        val file = _uiState.value.downloadedFiles[notice.id]
-        if (file != null) {
+        val existingFile = _uiState.value.downloadedFiles[notice.id]
+        if (existingFile != null) {
             _uiState.update {
                 it.copy(
                     selectedNotice = notice,
                     showPdfViewer = true,
-                    pdfFile = file
+                    pdfFile = existingFile
                 )
+            }
+        } else {
+            // Open immediately in viewer and stream PDF into cache in background
+            viewModelScope.launch {
+                _uiState.update {
+                    it.copy(
+                        selectedNotice = notice,
+                        showPdfViewer = true,
+                        pdfFile = null
+                    )
+                }
+                val ctx = getApplication<Application>()
+                val file = repository.downloadPdf(notice, ctx)
+                if (file != null) {
+                    _uiState.update { state ->
+                        state.copy(
+                            downloadedFiles = state.downloadedFiles + (notice.id to file),
+                            pdfFile = file
+                        )
+                    }
+                } else {
+                    _uiState.update { state ->
+                        state.copy(error = "Could not load notice document")
+                    }
+                }
             }
         }
     }

@@ -142,7 +142,7 @@ fun MainScreen(
             // Check if matches any notice
             val match = uiState.notices.find { it.noticeUrl == pendingUrl || it.pdfUrl == pendingUrl }
             if (match != null) {
-                viewModel.downloadNotice(match)
+                viewModel.openPdf(match)
             }
         }
     }
@@ -153,25 +153,28 @@ fun MainScreen(
         }
     }
 
-    if (uiState.showPdfViewer && uiState.pdfFile != null) {
+    if (uiState.showPdfViewer) {
         PdfViewerScreen(
-            file = uiState.pdfFile!!,
-            title = uiState.selectedNotice?.title ?: "PDF Viewer",
+            file = uiState.pdfFile,
+            title = uiState.selectedNotice?.title ?: "Notice Document",
+            noticeUrl = uiState.selectedNotice?.noticeUrl.orEmpty(),
             onBack = { viewModel.closePdfViewer() },
             onOpenExternal = {
-                val uri = FileProvider.getUriForFile(
-                    context,
-                    "${context.packageName}.fileprovider",
-                    uiState.pdfFile!!
-                )
-                val intent = Intent(Intent.ACTION_VIEW).apply {
-                    setDataAndType(uri, "application/pdf")
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
-                try {
-                    context.startActivity(intent)
-                } catch (e: Exception) {
-                    Toast.makeText(context, "No PDF viewer found", Toast.LENGTH_SHORT).show()
+                uiState.pdfFile?.let { pdfFile ->
+                    val uri = FileProvider.getUriForFile(
+                        context,
+                        "${context.packageName}.fileprovider",
+                        pdfFile
+                    )
+                    val intent = Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(uri, "application/pdf")
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    try {
+                        context.startActivity(intent)
+                    } catch (e: Exception) {
+                        Toast.makeText(context, "No external PDF viewer found", Toast.LENGTH_SHORT).show()
+                    }
                 }
             }
         )
@@ -527,7 +530,6 @@ fun MainScreen(
                             StatsCard(
                                 totalNotices = displayNotices.size,
                                 importantNotices = importantCount,
-                                downloadedNotices = uiState.downloadedFiles.size,
                                 onImportantClick = { viewModel.selectCategory(NoticeCategory.IMPORTANT) }
                             )
                         }
@@ -538,9 +540,6 @@ fun MainScreen(
                         ) { _, notice ->
                             NoticeCard(
                                 notice = notice,
-                                isDownloading = uiState.downloadingNoticeIds.contains(notice.id),
-                                isDownloaded = uiState.downloadedFiles.containsKey(notice.id),
-                                onDownload = { viewModel.downloadNotice(notice, autoOpen = true) },
                                 onView = { viewModel.openPdf(notice) },
                                 onOpenUrl = {
                                     val urlToOpen = notice.noticeUrl.ifBlank { notice.pdfUrl }
@@ -568,7 +567,6 @@ fun MainScreen(
 fun StatsCard(
     totalNotices: Int,
     importantNotices: Int,
-    downloadedNotices: Int,
     onImportantClick: () -> Unit
 ) {
     ElevatedCard(
@@ -591,7 +589,6 @@ fun StatsCard(
                 icon = Icons.Filled.PriorityHigh,
                 modifier = Modifier.clickable { onImportantClick() }
             )
-            StatItem(value = "$downloadedNotices", label = "Downloaded", icon = Icons.Filled.CloudDownload)
         }
     }
 }
@@ -631,20 +628,11 @@ fun StatItem(
 @Composable
 fun NoticeCard(
     notice: Notice,
-    isDownloading: Boolean,
-    isDownloaded: Boolean,
-    onDownload: () -> Unit,
     onView: () -> Unit,
     onOpenUrl: () -> Unit
 ) {
     ElevatedCard(
-        onClick = {
-            if (isDownloaded) {
-                onView()
-            } else if (!isDownloading) {
-                onDownload()
-            }
-        },
+        onClick = onView,
         modifier = Modifier
             .fillMaxWidth()
             .animateContentSize(
@@ -760,23 +748,6 @@ fun NoticeCard(
                 )
             }
 
-            // Downloading progress
-            if (isDownloading) {
-                Spacer(Modifier.height(12.dp))
-                LinearProgressIndicator(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(4.dp)),
-                    strokeCap = StrokeCap.Round
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "Downloading PDF...",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-
             Spacer(Modifier.height(12.dp))
 
             // Action buttons
@@ -798,40 +769,24 @@ fun NoticeCard(
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(Modifier.width(4.dp))
-                        Text("Open Link", style = MaterialTheme.typography.labelMedium)
+                        Text("Website", style = MaterialTheme.typography.labelMedium)
                     }
 
                     Spacer(Modifier.width(8.dp))
+                }
 
-                    if (isDownloaded) {
-                        FilledTonalButton(
-                            onClick = onView,
-                            modifier = Modifier.height(36.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp)
-                        ) {
-                            Icon(
-                                Icons.Filled.Visibility,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text("View PDF", style = MaterialTheme.typography.labelMedium)
-                        }
-                    } else if (!isDownloading) {
-                        FilledTonalButton(
-                            onClick = onDownload,
-                            modifier = Modifier.height(36.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp)
-                        ) {
-                            Icon(
-                                Icons.Filled.Download,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text("Download PDF", style = MaterialTheme.typography.labelMedium)
-                        }
-                    }
+                FilledTonalButton(
+                    onClick = onView,
+                    modifier = Modifier.height(36.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp)
+                ) {
+                    Icon(
+                        Icons.Filled.Visibility,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text("View Notice", style = MaterialTheme.typography.labelMedium)
                 }
             }
         }
@@ -840,18 +795,25 @@ fun NoticeCard(
 
 @Composable
 fun PdfViewerScreen(
-    file: File,
+    file: File?,
     title: String,
+    noticeUrl: String = "",
     onBack: () -> Unit,
     onOpenExternal: () -> Unit
 ) {
     // Intercept back button in PDF viewer screen
     BackHandler(onBack = onBack)
+    val context = LocalContext.current
 
     var pages by remember(file) { mutableStateOf<List<Bitmap>?>(null) }
-    var isRendering by remember(file) { mutableStateOf(true) }
+    var isRendering by remember(file) { mutableStateOf(file != null) }
 
     LaunchedEffect(file) {
+        if (file == null) {
+            pages = null
+            isRendering = false
+            return@LaunchedEffect
+        }
         isRendering = true
         withContext(Dispatchers.IO) {
             val bitmaps = mutableListOf<Bitmap>()
@@ -905,8 +867,10 @@ fun PdfViewerScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = onOpenExternal) {
-                        Icon(Icons.AutoMirrored.Filled.OpenInNew, "Open externally")
+                    if (file != null) {
+                        IconButton(onClick = onOpenExternal) {
+                            Icon(Icons.AutoMirrored.Filled.OpenInNew, "Open externally")
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -916,7 +880,7 @@ fun PdfViewerScreen(
             )
         }
     ) { innerPadding ->
-        if (isRendering) {
+        if (file == null || isRendering) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -930,7 +894,7 @@ fun PdfViewerScreen(
                     )
                     Spacer(Modifier.height(16.dp))
                     Text(
-                        "Rendering PDF preview...",
+                        if (file == null) "Loading notice..." else "Rendering PDF preview...",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -953,7 +917,20 @@ fun PdfViewerScreen(
                     Spacer(Modifier.height(16.dp))
                     Text("Cannot render PDF preview")
                     Spacer(Modifier.height(8.dp))
-                    FilledTonalButton(onClick = onOpenExternal) {
+                    if (noticeUrl.isNotBlank()) {
+                        FilledTonalButton(onClick = {
+                            try {
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(noticeUrl))
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "Cannot open URL", Toast.LENGTH_SHORT).show()
+                            }
+                        }) {
+                            Text("Open on College Website")
+                        }
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    OutlinedButton(onClick = onOpenExternal) {
                         Text("Open in external viewer")
                     }
                 }

@@ -192,7 +192,7 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
 
     override suspend fun downloadPdf(notice: Notice, context: Context): File? =
         withContext(Dispatchers.IO) {
-            val dir = File(context.filesDir, "notices")
+            val dir = File(context.cacheDir, "notices")
             if (!dir.exists()) dir.mkdirs()
 
             val fileName = "${notice.id.hashCode()}.pdf"
@@ -256,7 +256,7 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
     }
 
     override fun getDownloadedFile(notice: Notice, context: Context): File? {
-        val dir = File(context.filesDir, "notices")
+        val dir = File(context.cacheDir, "notices")
         val fileName = "${notice.id.hashCode()}.pdf"
         val file = File(dir, fileName)
         return if (isValidPdf(file)) file else null
