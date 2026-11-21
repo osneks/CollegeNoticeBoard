@@ -22,11 +22,8 @@ data class MainScreenUiState(
     val searchQuery: String = "",
     val error: String? = null,
     val isRefreshing: Boolean = false,
-    val downloadingNoticeIds: Set<String> = emptySet(),
-    val downloadedFiles: Map<String, File> = emptyMap(),
-    val selectedNotice: Notice? = null,
-    val showPdfViewer: Boolean = false,
-    val pdfFile: File? = null
+    val loadingNoticeId: String? = null,
+    val downloadedFiles: Map<String, File> = emptyMap()
 )
 
 class MainScreenViewModel(application: Application) : AndroidViewModel(application) {
@@ -124,76 +121,28 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    fun downloadNotice(notice: Notice, autoOpen: Boolean = false) {
+    fun openPdf(notice: Notice, onFileReady: (File) -> Unit) {
+        val existingFile = _uiState.value.downloadedFiles[notice.id]
+        if (existingFile != null && existingFile.exists()) {
+            onFileReady(existingFile)
+            return
+        }
+
         viewModelScope.launch {
-            _uiState.update {
-                it.copy(downloadingNoticeIds = it.downloadingNoticeIds + notice.id)
-            }
+            _uiState.update { it.copy(loadingNoticeId = notice.id) }
             val ctx = getApplication<Application>()
             val file = repository.downloadPdf(notice, ctx)
             _uiState.update { state ->
-                val newDownloading = state.downloadingNoticeIds - notice.id
-                val newFiles = if (file != null) {
-                    state.downloadedFiles + (notice.id to file)
-                } else {
-                    state.downloadedFiles
-                }
+                val newFiles = if (file != null) state.downloadedFiles + (notice.id to file) else state.downloadedFiles
                 state.copy(
-                    downloadingNoticeIds = newDownloading,
+                    loadingNoticeId = null,
                     downloadedFiles = newFiles,
-                    showPdfViewer = if (autoOpen && file != null) true else state.showPdfViewer,
-                    selectedNotice = if (autoOpen && file != null) notice else state.selectedNotice,
-                    pdfFile = if (autoOpen && file != null) file else state.pdfFile
+                    error = if (file == null) "Could not load notice document" else null
                 )
             }
-        }
-    }
-
-    fun openPdf(notice: Notice) {
-        val existingFile = _uiState.value.downloadedFiles[notice.id]
-        if (existingFile != null) {
-            _uiState.update {
-                it.copy(
-                    selectedNotice = notice,
-                    showPdfViewer = true,
-                    pdfFile = existingFile
-                )
+            if (file != null) {
+                onFileReady(file)
             }
-        } else {
-            // Open immediately in viewer and stream PDF into cache in background
-            viewModelScope.launch {
-                _uiState.update {
-                    it.copy(
-                        selectedNotice = notice,
-                        showPdfViewer = true,
-                        pdfFile = null
-                    )
-                }
-                val ctx = getApplication<Application>()
-                val file = repository.downloadPdf(notice, ctx)
-                if (file != null) {
-                    _uiState.update { state ->
-                        state.copy(
-                            downloadedFiles = state.downloadedFiles + (notice.id to file),
-                            pdfFile = file
-                        )
-                    }
-                } else {
-                    _uiState.update { state ->
-                        state.copy(error = "Could not load notice document")
-                    }
-                }
-            }
-        }
-    }
-
-    fun closePdfViewer() {
-        _uiState.update {
-            it.copy(
-                showPdfViewer = false,
-                selectedNotice = null,
-                pdfFile = null
-            )
         }
     }
 

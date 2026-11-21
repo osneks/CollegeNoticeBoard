@@ -2,11 +2,9 @@
 
 package com.example.collegenoticeboard.ui.main
 
+import android.content.Context
 import android.content.Intent
-import android.graphics.Bitmap
-import android.graphics.pdf.PdfRenderer
 import android.net.Uri
-import android.os.ParcelFileDescriptor
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateContentSize
@@ -139,11 +137,6 @@ fun MainScreen(
     val context = LocalContext.current
     var menuExpanded by remember { mutableStateOf(false) }
 
-    // Intercept back button to return from PDF viewer to notice list
-    BackHandler(enabled = uiState.showPdfViewer) {
-        viewModel.closePdfViewer()
-    }
-
     // Auto-focus or highlight notification deep-linked circular if opened from notification
     LaunchedEffect(Unit) {
         val pendingUrl = com.example.collegenoticeboard.MainActivity.pendingNoticeUrl
@@ -152,7 +145,9 @@ fun MainScreen(
             // Check if matches any notice
             val match = uiState.notices.find { it.noticeUrl == pendingUrl || it.pdfUrl == pendingUrl }
             if (match != null) {
-                viewModel.openPdf(match)
+                viewModel.openPdf(match) { file ->
+                    openPdfInDriveOrDocs(context, file)
+                }
             }
         }
     }
@@ -161,34 +156,6 @@ fun MainScreen(
         uiState.error?.let {
             snackbarHostState.showSnackbar(it)
         }
-    }
-
-    if (uiState.showPdfViewer) {
-        PdfViewerScreen(
-            file = uiState.pdfFile,
-            title = uiState.selectedNotice?.title ?: "Notice Document",
-            noticeUrl = uiState.selectedNotice?.noticeUrl.orEmpty(),
-            onBack = { viewModel.closePdfViewer() },
-            onOpenExternal = {
-                uiState.pdfFile?.let { pdfFile ->
-                    val uri = FileProvider.getUriForFile(
-                        context,
-                        "${context.packageName}.fileprovider",
-                        pdfFile
-                    )
-                    val intent = Intent(Intent.ACTION_VIEW).apply {
-                        setDataAndType(uri, "application/pdf")
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    }
-                    try {
-                        context.startActivity(intent)
-                    } catch (e: Exception) {
-                        Toast.makeText(context, "No external PDF viewer found", Toast.LENGTH_SHORT).show()
-                    }
-                }
-            }
-        )
-        return
     }
 
     Scaffold(
@@ -493,7 +460,12 @@ fun MainScreen(
                         ) { _, notice ->
                             NoticeCard(
                                 notice = notice,
-                                onView = { viewModel.openPdf(notice) },
+                                isLoading = uiState.loadingNoticeId == notice.id,
+                                onView = {
+                                    viewModel.openPdf(notice) { file ->
+                                        openPdfInDriveOrDocs(context, file)
+                                    }
+                                },
                                 onOpenUrl = {
                                     val urlToOpen = notice.noticeUrl.ifBlank { notice.pdfUrl }
                                     if (urlToOpen.isNotBlank()) {
@@ -513,6 +485,23 @@ fun MainScreen(
                 }
             }
         }
+    }
+}
+
+fun openPdfInDriveOrDocs(context: Context, file: File) {
+    val uri = FileProvider.getUriForFile(
+        context,
+        "${context.packageName}.fileprovider",
+        file
+    )
+    val intent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, "application/pdf")
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    try {
+        context.startActivity(intent)
+    } catch (e: Exception) {
+        Toast.makeText(context, "No PDF viewer found on device", Toast.LENGTH_SHORT).show()
     }
 }
 
@@ -576,6 +565,7 @@ fun StatItem(
 @Composable
 fun NoticeCard(
     notice: Notice,
+    isLoading: Boolean,
     onView: () -> Unit,
     onOpenUrl: () -> Unit
 ) {
@@ -666,6 +656,23 @@ fun NoticeCard(
                 )
             }
 
+            // Loading state when opening notice
+            if (isLoading) {
+                Spacer(Modifier.height(12.dp))
+                LinearProgressIndicator(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(4.dp)),
+                    strokeCap = StrokeCap.Round
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Opening in Google Drive / Docs...",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+
             Spacer(Modifier.height(12.dp))
 
             // Action buttons
@@ -696,334 +703,27 @@ fun NoticeCard(
 
                 FilledTonalButton(
                     onClick = onView,
+                    enabled = !isLoading,
                     modifier = Modifier.height(36.dp),
                     contentPadding = PaddingValues(horizontal = 12.dp)
                 ) {
-                    Icon(
-                        Icons.Filled.Visibility,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Text("View Notice", style = MaterialTheme.typography.labelMedium)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun PdfViewerScreen(
-    file: File?,
-    title: String,
-    noticeUrl: String = "",
-    onBack: () -> Unit,
-    onOpenExternal: () -> Unit
-) {
-    // Intercept back button in PDF viewer screen
-    BackHandler(onBack = onBack)
-    val context = LocalContext.current
-
-    var pages by remember(file) { mutableStateOf<List<Bitmap>?>(null) }
-    var isRendering by remember(file) { mutableStateOf(file != null) }
-    var globalZoom by remember { mutableFloatStateOf(1.0f) }
-
-    LaunchedEffect(file) {
-        if (file == null) {
-            pages = null
-            isRendering = false
-            return@LaunchedEffect
-        }
-        isRendering = true
-        withContext(Dispatchers.IO) {
-            val bitmaps = mutableListOf<Bitmap>()
-            var fd: ParcelFileDescriptor? = null
-            var renderer: PdfRenderer? = null
-            try {
-                fd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
-                renderer = PdfRenderer(fd)
-                for (i in 0 until renderer.pageCount) {
-                    val page = renderer.openPage(i)
-                    // Render at crisp 1440px width so text is sharp when zoomed in
-                    val targetWidth = 1440f
-                    val scale = if (page.width > 0) (targetWidth / page.width).coerceIn(1.2f, 2.5f) else 1.5f
-                    val destWidth = (page.width * scale).toInt()
-                    val destHeight = (page.height * scale).toInt()
-
-                    val bitmap = Bitmap.createBitmap(
-                        destWidth,
-                        destHeight,
-                        Bitmap.Config.ARGB_8888
-                    )
-                    bitmap.eraseColor(android.graphics.Color.WHITE)
-                    page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                    bitmaps.add(bitmap)
-                    page.close()
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            } finally {
-                try { renderer?.close() } catch (ignored: Exception) {}
-                try { fd?.close() } catch (ignored: Exception) {}
-            }
-            pages = bitmaps
-            isRendering = false
-        }
-    }
-
-    Scaffold(
-        topBar = {
-            CenterAlignedTopAppBar(
-                title = {
-                    Text(
-                        title,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.titleSmall
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
-                    }
-                },
-                actions = {
-                    if (file != null && !pages.isNullOrEmpty()) {
-                        IconButton(
-                            onClick = { globalZoom = (globalZoom - 0.25f).coerceAtLeast(1.0f) },
-                            enabled = globalZoom > 1.0f
-                        ) {
-                            Icon(Icons.Filled.ZoomOut, contentDescription = "Zoom Out")
-                        }
-
-                        Surface(
-                            onClick = { globalZoom = 1.0f },
-                            shape = RoundedCornerShape(8.dp),
-                            color = if (globalZoom > 1.0f) {
-                                MaterialTheme.colorScheme.primaryContainer
-                            } else {
-                                MaterialTheme.colorScheme.surfaceContainerHigh
-                            },
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                        ) {
-                            Text(
-                                text = "${(globalZoom * 100).toInt()}%",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = if (globalZoom > 1.0f) {
-                                    MaterialTheme.colorScheme.onPrimaryContainer
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                },
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
-                            )
-                        }
-
-                        IconButton(
-                            onClick = { globalZoom = (globalZoom + 0.25f).coerceAtMost(3.0f) },
-                            enabled = globalZoom < 3.0f
-                        ) {
-                            Icon(Icons.Filled.ZoomIn, contentDescription = "Zoom In")
-                        }
-
-                        IconButton(onClick = onOpenExternal) {
-                            Icon(Icons.AutoMirrored.Filled.OpenInNew, "Open externally")
-                        }
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                )
-            )
-        }
-    ) { innerPadding ->
-        if (file == null || isRendering) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(48.dp),
-                        strokeCap = StrokeCap.Round
-                    )
-                    Spacer(Modifier.height(16.dp))
-                    Text(
-                        if (file == null) "Loading notice..." else "Rendering PDF preview...",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        } else if (pages.isNullOrEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        Icons.Filled.PictureAsPdf,
-                        null,
-                        modifier = Modifier.size(64.dp),
-                        tint = MaterialTheme.colorScheme.error
-                    )
-                    Spacer(Modifier.height(16.dp))
-                    Text("Cannot render PDF preview")
-                    Spacer(Modifier.height(8.dp))
-                    if (noticeUrl.isNotBlank()) {
-                        FilledTonalButton(onClick = {
-                            try {
-                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(noticeUrl))
-                                context.startActivity(intent)
-                            } catch (e: Exception) {
-                                Toast.makeText(context, "Cannot open URL", Toast.LENGTH_SHORT).show()
-                            }
-                        }) {
-                            Text("Open on College Website")
-                        }
-                        Spacer(Modifier.height(8.dp))
-                    }
-                    OutlinedButton(onClick = onOpenExternal) {
-                        Text("Open in external viewer")
-                    }
-                }
-            }
-        } else {
-            val pageList = pages!!
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding)
-                    .background(MaterialTheme.colorScheme.surfaceContainerLow),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                item {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 4.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            "${pageList.size} page(s)",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                    if (isLoading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp
                         )
-                        Text(
-                            "Pinch or double-tap to zoom",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Loading...", style = MaterialTheme.typography.labelMedium)
+                    } else {
+                        Icon(
+                            Icons.Filled.Visibility,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
                         )
+                        Spacer(Modifier.width(4.dp))
+                        Text("View Notice", style = MaterialTheme.typography.labelMedium)
                     }
                 }
-                itemsIndexed(pageList) { index, bitmap ->
-                    ZoomablePdfPage(
-                        bitmap = bitmap,
-                        pageIndex = index,
-                        totalPages = pageList.size,
-                        zoomMultiplier = globalZoom,
-                        onResetGlobalZoom = { globalZoom = 1.0f }
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun ZoomablePdfPage(
-    bitmap: Bitmap,
-    pageIndex: Int,
-    totalPages: Int,
-    zoomMultiplier: Float,
-    onResetGlobalZoom: () -> Unit
-) {
-    var pinchScale by remember { mutableFloatStateOf(1f) }
-    var panOffset by remember { mutableStateOf(Offset.Zero) }
-
-    val totalScale = (zoomMultiplier * pinchScale).coerceIn(1f, 4f)
-
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp)),
-        shape = RoundedCornerShape(12.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-    ) {
-        Column {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clipToBounds()
-                    .pointerInput(totalScale) {
-                        detectTapGestures(
-                            onDoubleTap = {
-                                if (totalScale > 1.05f) {
-                                    pinchScale = 1f
-                                    panOffset = Offset.Zero
-                                    onResetGlobalZoom()
-                                } else {
-                                    pinchScale = 2.0f / zoomMultiplier
-                                    panOffset = Offset.Zero
-                                }
-                            }
-                        )
-                    }
-                    .pointerInput(totalScale > 1.01f) {
-                        if (totalScale > 1.01f) {
-                            detectTransformGestures { _, pan, zoom, _ ->
-                                pinchScale = (pinchScale * zoom).coerceIn(0.5f, 4f)
-                                panOffset = Offset(
-                                    panOffset.x + pan.x,
-                                    panOffset.y + pan.y
-                                )
-                            }
-                        } else {
-                            detectTransformGestures { _, _, zoom, _ ->
-                                if (zoom != 1f) {
-                                    pinchScale = (pinchScale * zoom).coerceIn(1f, 4f)
-                                }
-                            }
-                        }
-                    }
-            ) {
-                Image(
-                    bitmap = bitmap.asImageBitmap(),
-                    contentDescription = "Page ${pageIndex + 1}",
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .graphicsLayer {
-                            scaleX = totalScale
-                            scaleY = totalScale
-                            translationX = if (totalScale > 1f) panOffset.x else 0f
-                            translationY = if (totalScale > 1f) panOffset.y else 0f
-                        },
-                    contentScale = ContentScale.FillWidth
-                )
-            }
-
-            if (totalPages > 1) {
-                Text(
-                    "Page ${pageIndex + 1} of $totalPages",
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                        .padding(8.dp),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center
-                )
             }
         }
     }
