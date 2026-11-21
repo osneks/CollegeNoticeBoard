@@ -1,0 +1,34 @@
+name: Check College Notices & Send Push Alerts
+
+on:
+  schedule:
+    # Run every 5 minutes (standard cron syntax)
+    - cron: '*/5 * * * *'
+  workflow_dispatch: # Allows manual trigger from GitHub Actions dashboard
+
+jobs:
+  check-notices:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run Notice Scraper
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC || 'ajc_bose_college_notices_2026' }}
+        run: |
+          python scraper/check_notices.py
+
+      - name: Commit and Push Updated Seen State
+        run: |
+          git config --global user.name "Notice Bot"
+          git config --global user.email "bot@github.com"
+          git add seen_notices.json
+          git commit -m "Update seen notices [skip ci]" || echo "No changes to commit"
+          git push || echo "No changes to push"
