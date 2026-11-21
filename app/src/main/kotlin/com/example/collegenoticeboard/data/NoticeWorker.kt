@@ -108,11 +108,10 @@ class NoticeCheckWorker(
         )
 
         val latestNotice = newNotices.first()
-        val hasImportant = newNotices.any { it.isImportant }
-        val targetChannel = if (hasImportant) IMPORTANT_CHANNEL_ID else CHANNEL_ID
+        val targetChannel = CHANNEL_ID
 
         val title = if (newNotices.size == 1) {
-            if (latestNotice.isImportant) "🚨 Important: ${latestNotice.category}" else "New Notice: ${latestNotice.category}"
+            "New Notice: ${latestNotice.category}"
         } else {
             "🔔 ${newNotices.size} New College Notices"
         }
@@ -126,7 +125,6 @@ class NoticeCheckWorker(
         val bigText = StringBuilder().apply {
             newNotices.take(5).forEach { notice ->
                 append("• ")
-                if (notice.isImportant) append("[IMPORTANT] ")
                 append(notice.title)
                 append("\n")
             }
@@ -140,9 +138,7 @@ class NoticeCheckWorker(
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(bigText))
-            .setPriority(
-                if (hasImportant) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_DEFAULT
-            )
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
             .build()

@@ -73,6 +73,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
@@ -181,10 +182,6 @@ fun MainScreen(
         return
     }
 
-    val importantCount = remember(uiState.notices) {
-        uiState.notices.count { it.isImportant }
-    }
-
     Scaffold(
         modifier = modifier,
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -248,11 +245,7 @@ fun MainScreen(
                     modifier = Modifier.weight(1f),
                     placeholder = {
                         Text(
-                            when (uiState.selectedCategory) {
-                                NoticeCategory.ALL -> "Search all notices..."
-                                NoticeCategory.IMPORTANT -> "Search important notices..."
-                                else -> "Search ${uiState.selectedCategory.displayName} notices..."
-                            },
+                            if (uiState.selectedCategory == NoticeCategory.ALL) "Search all notices..." else "Search ${uiState.selectedCategory.displayName} notices...",
                             style = MaterialTheme.typography.bodyMedium
                         )
                     },
@@ -273,10 +266,10 @@ fun MainScreen(
                     singleLine = true,
                     shape = RoundedCornerShape(24.dp),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f),
+                        focusedContainerColor = MaterialTheme.colorScheme.surface,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surface,
                         focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = Color.Transparent
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
                     )
                 )
 
@@ -285,13 +278,12 @@ fun MainScreen(
                     Surface(
                         onClick = { menuExpanded = true },
                         shape = RoundedCornerShape(16.dp),
-                        color = if (uiState.selectedCategory == NoticeCategory.IMPORTANT) {
-                            MaterialTheme.colorScheme.errorContainer
-                        } else if (uiState.selectedCategory != NoticeCategory.ALL) {
+                        color = if (uiState.selectedCategory != NoticeCategory.ALL) {
                             MaterialTheme.colorScheme.primaryContainer
                         } else {
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
                         },
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                         modifier = Modifier.height(52.dp)
                     ) {
                         Row(
@@ -300,16 +292,10 @@ fun MainScreen(
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
                             Icon(
-                                if (uiState.selectedCategory == NoticeCategory.IMPORTANT) {
-                                    Icons.Filled.PriorityHigh
-                                } else {
-                                    Icons.Filled.FilterList
-                                },
+                                Icons.Filled.FilterList,
                                 contentDescription = "Filter Menu",
                                 modifier = Modifier.size(20.dp),
-                                tint = if (uiState.selectedCategory == NoticeCategory.IMPORTANT) {
-                                    MaterialTheme.colorScheme.error
-                                } else if (uiState.selectedCategory != NoticeCategory.ALL) {
+                                tint = if (uiState.selectedCategory != NoticeCategory.ALL) {
                                     MaterialTheme.colorScheme.primary
                                 } else {
                                     MaterialTheme.colorScheme.onSurfaceVariant
@@ -343,41 +329,7 @@ fun MainScreen(
                             }
                         )
 
-                        // 2. Important Notices
-                        DropdownMenuItem(
-                            text = {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("Important Notices", fontWeight = if (uiState.selectedCategory == NoticeCategory.IMPORTANT) FontWeight.Bold else FontWeight.Normal)
-                                    if (importantCount > 0) {
-                                        Spacer(Modifier.width(8.dp))
-                                        Surface(
-                                            color = MaterialTheme.colorScheme.errorContainer,
-                                            shape = CircleShape
-                                        ) {
-                                            Text(
-                                                "$importantCount",
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                                style = MaterialTheme.typography.labelSmall,
-                                                fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colorScheme.onErrorContainer
-                                            )
-                                        }
-                                    }
-                                }
-                            },
-                            leadingIcon = {
-                                Icon(Icons.Filled.PriorityHigh, contentDescription = null, tint = MaterialTheme.colorScheme.error)
-                            },
-                            trailingIcon = if (uiState.selectedCategory == NoticeCategory.IMPORTANT) {
-                                { Icon(Icons.Filled.Check, contentDescription = null, tint = MaterialTheme.colorScheme.error) }
-                            } else null,
-                            onClick = {
-                                viewModel.selectCategory(NoticeCategory.IMPORTANT)
-                                menuExpanded = false
-                            }
-                        )
-
-                        // 3. Admission Notices
+                        // 2. Admission Notices
                         DropdownMenuItem(
                             text = { Text("Admission", fontWeight = if (uiState.selectedCategory == NoticeCategory.ADMISSION) FontWeight.Bold else FontWeight.Normal) },
                             leadingIcon = {
@@ -392,7 +344,7 @@ fun MainScreen(
                             }
                         )
 
-                        // 4. Examination Notices
+                        // 3. Examination Notices
                         DropdownMenuItem(
                             text = { Text("Exam", fontWeight = if (uiState.selectedCategory == NoticeCategory.EXAM) FontWeight.Bold else FontWeight.Normal) },
                             leadingIcon = {
@@ -407,7 +359,7 @@ fun MainScreen(
                             }
                         )
 
-                        // 5. Tender Notices
+                        // 4. Tender Notices
                         DropdownMenuItem(
                             text = { Text("Tender", fontWeight = if (uiState.selectedCategory == NoticeCategory.TENDER) FontWeight.Bold else FontWeight.Normal) },
                             leadingIcon = {
@@ -425,7 +377,7 @@ fun MainScreen(
                 }
             }
 
-            // Active Filter Chip Badge (When a specific filter like Important/Exam/Admission/Tender is selected)
+            // Active Filter Chip Badge (When a specific filter like Exam/Admission/Tender is selected)
             if (uiState.selectedCategory != NoticeCategory.ALL) {
                 Row(
                     modifier = Modifier
@@ -435,12 +387,9 @@ fun MainScreen(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Surface(
-                        color = if (uiState.selectedCategory == NoticeCategory.IMPORTANT) {
-                            MaterialTheme.colorScheme.errorContainer
-                        } else {
-                            MaterialTheme.colorScheme.primaryContainer
-                        },
-                        shape = RoundedCornerShape(12.dp)
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
@@ -450,11 +399,7 @@ fun MainScreen(
                                 "Showing: ${uiState.selectedCategory.displayName}",
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
-                                color = if (uiState.selectedCategory == NoticeCategory.IMPORTANT) {
-                                    MaterialTheme.colorScheme.onErrorContainer
-                                } else {
-                                    MaterialTheme.colorScheme.onPrimaryContainer
-                                }
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
                             )
                         }
                     }
@@ -494,14 +439,14 @@ fun MainScreen(
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(
-                            if (uiState.selectedCategory == NoticeCategory.IMPORTANT) Icons.Filled.Star else Icons.Filled.Description,
+                            Icons.Filled.Description,
                             contentDescription = null,
                             modifier = Modifier.size(72.dp),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                         )
                         Spacer(Modifier.height(16.dp))
                         Text(
-                            if (uiState.selectedCategory == NoticeCategory.IMPORTANT) "No important notices currently" else "No notices found",
+                            "No notices found",
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -529,8 +474,7 @@ fun MainScreen(
                         item {
                             StatsCard(
                                 totalNotices = displayNotices.size,
-                                importantNotices = importantCount,
-                                onImportantClick = { viewModel.selectCategory(NoticeCategory.IMPORTANT) }
+                                newNotices = uiState.notices.count { it.isNew }
                             )
                         }
 
@@ -566,15 +510,15 @@ fun MainScreen(
 @Composable
 fun StatsCard(
     totalNotices: Int,
-    importantNotices: Int,
-    onImportantClick: () -> Unit
+    newNotices: Int
 ) {
-    ElevatedCard(
+    OutlinedCard(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.elevatedCardColors(
-            containerColor = MaterialTheme.colorScheme.secondaryContainer
+        colors = CardDefaults.outlinedCardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
         ),
-        shape = RoundedCornerShape(16.dp)
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Row(
             modifier = Modifier
@@ -583,12 +527,7 @@ fun StatsCard(
             horizontalArrangement = Arrangement.SpaceAround
         ) {
             StatItem(value = "$totalNotices", label = "All Notices", icon = Icons.Filled.Description)
-            StatItem(
-                value = "$importantNotices",
-                label = "Important",
-                icon = Icons.Filled.PriorityHigh,
-                modifier = Modifier.clickable { onImportantClick() }
-            )
+            StatItem(value = "$newNotices", label = "New Updates", icon = Icons.Filled.Star)
         }
     }
 }
@@ -631,7 +570,7 @@ fun NoticeCard(
     onView: () -> Unit,
     onOpenUrl: () -> Unit
 ) {
-    ElevatedCard(
+    OutlinedCard(
         onClick = onView,
         modifier = Modifier
             .fillMaxWidth()
@@ -642,19 +581,13 @@ fun NoticeCard(
                 )
             ),
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.elevatedCardColors(
-            containerColor = if (notice.isImportant) {
-                MaterialTheme.colorScheme.surfaceVariant
-            } else {
-                MaterialTheme.colorScheme.surface
-            }
+        colors = CardDefaults.outlinedCardColors(
+            containerColor = MaterialTheme.colorScheme.surface
         ),
-        elevation = CardDefaults.elevatedCardElevation(
-            defaultElevation = if (notice.isImportant) 4.dp else 1.dp
-        )
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            // Header: Category badge + Important badge + New badge + Date
+            // Header: Category badge + New badge + Date
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -666,7 +599,8 @@ fun NoticeCard(
                 ) {
                     Surface(
                         color = MaterialTheme.colorScheme.tertiaryContainer,
-                        shape = RoundedCornerShape(8.dp)
+                        shape = RoundedCornerShape(8.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     ) {
                         Text(
                             notice.category,
@@ -677,36 +611,11 @@ fun NoticeCard(
                         )
                     }
 
-                    if (notice.isImportant) {
-                        Surface(
-                            color = MaterialTheme.colorScheme.errorContainer,
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    Icons.Filled.PriorityHigh,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(12.dp),
-                                    tint = MaterialTheme.colorScheme.error
-                                )
-                                Spacer(Modifier.width(2.dp))
-                                Text(
-                                    "IMPORTANT",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onErrorContainer,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                    }
-
                     if (notice.isNew) {
                         Surface(
                             color = MaterialTheme.colorScheme.primaryContainer,
-                            shape = RoundedCornerShape(8.dp)
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                         ) {
                             Text(
                                 "NEW",
@@ -761,7 +670,8 @@ fun NoticeCard(
                     OutlinedButton(
                         onClick = onOpenUrl,
                         modifier = Modifier.height(36.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp)
+                        contentPadding = PaddingValues(horizontal = 12.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                     ) {
                         Icon(
                             Icons.AutoMirrored.Filled.OpenInNew,
@@ -957,7 +867,11 @@ fun PdfViewerScreen(
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surface
+                        ),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                     ) {
                         Column {
                             Image(

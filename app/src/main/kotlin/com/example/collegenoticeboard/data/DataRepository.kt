@@ -68,7 +68,6 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
                             val noticeUrl = if (href.startsWith("http")) href else "$erpBaseUrl/$href"
 
                             val id = "ALL_NOTICE_${ntid}_${index}_${titleText.hashCode()}"
-                            val isImportant = checkIsImportant(titleText, catName)
 
                             notices.add(
                                 Notice(
@@ -79,7 +78,7 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
                                     noticeUrl = noticeUrl,
                                     pdfUrl = "", // resolved on-demand or during download
                                     isNew = isNoticeNew(id),
-                                    isImportant = isImportant
+                                    isImportant = false
                                 )
                             )
                         }
@@ -113,7 +112,7 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
                                     noticeUrl = href,
                                     pdfUrl = if (href.endsWith(".pdf", ignoreCase = true)) href else "",
                                     isNew = isNoticeNew(id),
-                                    isImportant = checkIsImportant(text, "General")
+                                    isImportant = false
                                 )
                             )
                         }
