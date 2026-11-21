@@ -124,7 +124,7 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    fun downloadNotice(notice: Notice) {
+    fun downloadNotice(notice: Notice, autoOpen: Boolean = false) {
         viewModelScope.launch {
             _uiState.update {
                 it.copy(downloadingNoticeIds = it.downloadingNoticeIds + notice.id)
@@ -140,7 +140,10 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
                 }
                 state.copy(
                     downloadingNoticeIds = newDownloading,
-                    downloadedFiles = newFiles
+                    downloadedFiles = newFiles,
+                    showPdfViewer = if (autoOpen && file != null) true else state.showPdfViewer,
+                    selectedNotice = if (autoOpen && file != null) notice else state.selectedNotice,
+                    pdfFile = if (autoOpen && file != null) file else state.pdfFile
                 )
             }
         }

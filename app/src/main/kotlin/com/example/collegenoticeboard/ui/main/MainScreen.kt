@@ -108,6 +108,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -538,7 +540,7 @@ fun MainScreen(
                                 notice = notice,
                                 isDownloading = uiState.downloadingNoticeIds.contains(notice.id),
                                 isDownloaded = uiState.downloadedFiles.containsKey(notice.id),
-                                onDownload = { viewModel.downloadNotice(notice) },
+                                onDownload = { viewModel.downloadNotice(notice, autoOpen = true) },
                                 onView = { viewModel.openPdf(notice) },
                                 onOpenUrl = {
                                     val urlToOpen = notice.noticeUrl.ifBlank { notice.pdfUrl }
@@ -636,6 +638,13 @@ fun NoticeCard(
     onOpenUrl: () -> Unit
 ) {
     ElevatedCard(
+        onClick = {
+            if (isDownloaded) {
+                onView()
+            } else if (!isDownloading) {
+                onDownload()
+            }
+        },
         modifier = Modifier
             .fillMaxWidth()
             .animateContentSize(
@@ -839,37 +848,44 @@ fun PdfViewerScreen(
     // Intercept back button in PDF viewer screen
     BackHandler(onBack = onBack)
 
-    val pages = remember(file) {
-        val bitmaps = mutableListOf<Bitmap>()
-        var fd: ParcelFileDescriptor? = null
-        var renderer: PdfRenderer? = null
-        try {
-            fd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
-            renderer = PdfRenderer(fd)
-            for (i in 0 until renderer.pageCount) {
-                val page = renderer.openPage(i)
-                // Downscale appropriately (clamp max dimension to 1080px) to prevent OOM
-                val scale = if (page.width > 0) (1080f / page.width).coerceIn(1.0f, 1.8f) else 1.0f
-                val destWidth = (page.width * scale).toInt()
-                val destHeight = (page.height * scale).toInt()
+    var pages by remember(file) { mutableStateOf<List<Bitmap>?>(null) }
+    var isRendering by remember(file) { mutableStateOf(true) }
 
-                val bitmap = Bitmap.createBitmap(
-                    destWidth,
-                    destHeight,
-                    Bitmap.Config.RGB_565 // Consumes 50% less RAM than ARGB_8888 with perfect clarity for documents
-                )
-                bitmap.eraseColor(android.graphics.Color.WHITE)
-                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                bitmaps.add(bitmap)
-                page.close()
+    LaunchedEffect(file) {
+        isRendering = true
+        withContext(Dispatchers.IO) {
+            val bitmaps = mutableListOf<Bitmap>()
+            var fd: ParcelFileDescriptor? = null
+            var renderer: PdfRenderer? = null
+            try {
+                fd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+                renderer = PdfRenderer(fd)
+                for (i in 0 until renderer.pageCount) {
+                    val page = renderer.openPage(i)
+                    // Downscale appropriately (clamp max dimension to 1080px) to prevent OOM
+                    val scale = if (page.width > 0) (1080f / page.width).coerceIn(1.0f, 1.8f) else 1.0f
+                    val destWidth = (page.width * scale).toInt()
+                    val destHeight = (page.height * scale).toInt()
+
+                    val bitmap = Bitmap.createBitmap(
+                        destWidth,
+                        destHeight,
+                        Bitmap.Config.ARGB_8888
+                    )
+                    bitmap.eraseColor(android.graphics.Color.WHITE)
+                    page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    bitmaps.add(bitmap)
+                    page.close()
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            } finally {
+                try { renderer?.close() } catch (ignored: Exception) {}
+                try { fd?.close() } catch (ignored: Exception) {}
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        } finally {
-            try { renderer?.close() } catch (ignored: Exception) {}
-            try { fd?.close() } catch (ignored: Exception) {}
+            pages = bitmaps
+            isRendering = false
         }
-        bitmaps
     }
 
     Scaffold(
@@ -900,7 +916,27 @@ fun PdfViewerScreen(
             )
         }
     ) { innerPadding ->
-        if (pages.isEmpty()) {
+        if (isRendering) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(48.dp),
+                        strokeCap = StrokeCap.Round
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    Text(
+                        "Rendering PDF preview...",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        } else if (pages.isNullOrEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -923,6 +959,7 @@ fun PdfViewerScreen(
                 }
             }
         } else {
+            val pageList = pages!!
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
@@ -933,13 +970,13 @@ fun PdfViewerScreen(
             ) {
                 item {
                     Text(
-                        "${pages.size} page(s)",
+                        "${pageList.size} page(s)",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(bottom = 4.dp)
                     )
                 }
-                itemsIndexed(pages) { index, bitmap ->
+                itemsIndexed(pageList) { index, bitmap ->
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
@@ -952,9 +989,9 @@ fun PdfViewerScreen(
                                 modifier = Modifier.fillMaxWidth(),
                                 contentScale = ContentScale.FillWidth
                             )
-                            if (pages.size > 1) {
+                            if (pageList.size > 1) {
                                 Text(
-                                    "Page ${index + 1} of ${pages.size}",
+                                    "Page ${index + 1} of ${pageList.size}",
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .background(MaterialTheme.colorScheme.surfaceContainerHigh)

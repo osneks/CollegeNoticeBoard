@@ -9,7 +9,7 @@ A modern Android application developed with **Jetpack Compose** and **Material 3
 - **Direct Portal Integration**: Scrapes and aggregates circulars directly from `https://www.ajcbosecollege.ac.in/all-notice.html` (All Notices, Admission, Examination, Tender).
 - **Modern Material 3 UI**: Clean, responsive layout with dynamic color styling, search bar, and sleek dropdown category filter.
 - **Urgent & Important Alerts**: Automatically detects critical deadlines, exam dates, merit lists, and form fill-up notices.
-- **In-App PDF Viewer**: High-performance built-in multi-page PDF reader with memory optimization (`RGB_565`) and system back-gesture support.
+- **In-App PDF Viewer**: High-performance built-in multi-page PDF reader with memory optimization (`ARGB_8888`), async background rendering, and system back-gesture support.
 - **Atomic PDF Downloader**: Offline storage with file integrity verification (`%PDF` magic header checks) preventing corrupt downloads.
 - **Cloud Push & Zero Battery Drain**: Offloaded cloud scraper powered by GitHub Actions running every 5 minutes with zero background CPU/battery drain on the phone.
 - **Telecom Safe**: Lifecycle-safe socket management guaranteeing zero interference with phone calls, dialers, or system ringtones.
