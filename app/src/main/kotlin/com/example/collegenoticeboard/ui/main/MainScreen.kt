@@ -16,6 +16,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -56,6 +58,8 @@ import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.ZoomIn
+import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -93,6 +97,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -100,10 +105,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -717,6 +726,7 @@ fun PdfViewerScreen(
 
     var pages by remember(file) { mutableStateOf<List<Bitmap>?>(null) }
     var isRendering by remember(file) { mutableStateOf(file != null) }
+    var globalZoom by remember { mutableFloatStateOf(1.0f) }
 
     LaunchedEffect(file) {
         if (file == null) {
@@ -734,8 +744,9 @@ fun PdfViewerScreen(
                 renderer = PdfRenderer(fd)
                 for (i in 0 until renderer.pageCount) {
                     val page = renderer.openPage(i)
-                    // Downscale appropriately (clamp max dimension to 1080px) to prevent OOM
-                    val scale = if (page.width > 0) (1080f / page.width).coerceIn(1.0f, 1.8f) else 1.0f
+                    // Render at crisp 1440px width so text is sharp when zoomed in
+                    val targetWidth = 1440f
+                    val scale = if (page.width > 0) (targetWidth / page.width).coerceIn(1.2f, 2.5f) else 1.5f
                     val destWidth = (page.width * scale).toInt()
                     val destHeight = (page.height * scale).toInt()
 
@@ -777,7 +788,44 @@ fun PdfViewerScreen(
                     }
                 },
                 actions = {
-                    if (file != null) {
+                    if (file != null && !pages.isNullOrEmpty()) {
+                        IconButton(
+                            onClick = { globalZoom = (globalZoom - 0.25f).coerceAtLeast(1.0f) },
+                            enabled = globalZoom > 1.0f
+                        ) {
+                            Icon(Icons.Filled.ZoomOut, contentDescription = "Zoom Out")
+                        }
+
+                        Surface(
+                            onClick = { globalZoom = 1.0f },
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (globalZoom > 1.0f) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.surfaceContainerHigh
+                            },
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                        ) {
+                            Text(
+                                text = "${(globalZoom * 100).toInt()}%",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = if (globalZoom > 1.0f) {
+                                    MaterialTheme.colorScheme.onPrimaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                            )
+                        }
+
+                        IconButton(
+                            onClick = { globalZoom = (globalZoom + 0.25f).coerceAtMost(3.0f) },
+                            enabled = globalZoom < 3.0f
+                        ) {
+                            Icon(Icons.Filled.ZoomIn, contentDescription = "Zoom In")
+                        }
+
                         IconButton(onClick = onOpenExternal) {
                             Icon(Icons.AutoMirrored.Filled.OpenInNew, "Open externally")
                         }
@@ -856,45 +904,126 @@ fun PdfViewerScreen(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 item {
-                    Text(
-                        "${pageList.size} page(s)",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 4.dp)
-                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "${pageList.size} page(s)",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            "Pinch or double-tap to zoom",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        )
+                    }
                 }
                 itemsIndexed(pageList) { index, bitmap ->
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surface
-                        ),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-                    ) {
-                        Column {
-                            Image(
-                                bitmap = bitmap.asImageBitmap(),
-                                contentDescription = "Page ${index + 1}",
-                                modifier = Modifier.fillMaxWidth(),
-                                contentScale = ContentScale.FillWidth
-                            )
-                            if (pageList.size > 1) {
-                                Text(
-                                    "Page ${index + 1} of ${pageList.size}",
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                                        .padding(8.dp),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    textAlign = TextAlign.Center
+                    ZoomablePdfPage(
+                        bitmap = bitmap,
+                        pageIndex = index,
+                        totalPages = pageList.size,
+                        zoomMultiplier = globalZoom,
+                        onResetGlobalZoom = { globalZoom = 1.0f }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ZoomablePdfPage(
+    bitmap: Bitmap,
+    pageIndex: Int,
+    totalPages: Int,
+    zoomMultiplier: Float,
+    onResetGlobalZoom: () -> Unit
+) {
+    var pinchScale by remember { mutableFloatStateOf(1f) }
+    var panOffset by remember { mutableStateOf(Offset.Zero) }
+
+    val totalScale = (zoomMultiplier * pinchScale).coerceIn(1f, 4f)
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp)),
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clipToBounds()
+                    .pointerInput(totalScale) {
+                        detectTapGestures(
+                            onDoubleTap = {
+                                if (totalScale > 1.05f) {
+                                    pinchScale = 1f
+                                    panOffset = Offset.Zero
+                                    onResetGlobalZoom()
+                                } else {
+                                    pinchScale = 2.0f / zoomMultiplier
+                                    panOffset = Offset.Zero
+                                }
+                            }
+                        )
+                    }
+                    .pointerInput(totalScale > 1.01f) {
+                        if (totalScale > 1.01f) {
+                            detectTransformGestures { _, pan, zoom, _ ->
+                                pinchScale = (pinchScale * zoom).coerceIn(0.5f, 4f)
+                                panOffset = Offset(
+                                    panOffset.x + pan.x,
+                                    panOffset.y + pan.y
                                 )
+                            }
+                        } else {
+                            detectTransformGestures { _, _, zoom, _ ->
+                                if (zoom != 1f) {
+                                    pinchScale = (pinchScale * zoom).coerceIn(1f, 4f)
+                                }
                             }
                         }
                     }
-                }
+            ) {
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = "Page ${pageIndex + 1}",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .graphicsLayer {
+                            scaleX = totalScale
+                            scaleY = totalScale
+                            translationX = if (totalScale > 1f) panOffset.x else 0f
+                            translationY = if (totalScale > 1f) panOffset.y else 0f
+                        },
+                    contentScale = ContentScale.FillWidth
+                )
+            }
+
+            if (totalPages > 1) {
+                Text(
+                    "Page ${pageIndex + 1} of $totalPages",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        .padding(8.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
             }
         }
     }
