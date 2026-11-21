@@ -134,7 +134,7 @@ class NoticeCheckWorker(
         }.toString().trimEnd()
 
         val notification = NotificationCompat.Builder(applicationContext, targetChannel)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.mipmap.ic_launcher_foreground)
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(bigText))
