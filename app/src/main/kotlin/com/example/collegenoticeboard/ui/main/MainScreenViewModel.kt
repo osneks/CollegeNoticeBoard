@@ -370,7 +370,8 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
     ): List<Notice> {
         return notices.filter { notice ->
             val matchesCategory = when (category) {
-                NoticeCategory.ALL -> true
+                NoticeCategory.ALL -> !notice.isArchived
+                NoticeCategory.HIDDEN_ARCHIVE -> notice.isArchived
                 NoticeCategory.IMPORTANT -> notice.isImportant
                 else -> notice.category.equals(category.displayName, ignoreCase = true)
             }

@@ -13,7 +13,8 @@ data class Notice(
     val isNew: Boolean = false,
     val isDownloaded: Boolean = false,
     val isImportant: Boolean = false,
-    val isArchived: Boolean = false
+    val isArchived: Boolean = false,
+    val webOrder: Int = 0
 )
 
 enum class NoticeCategory(val displayName: String, val ntid: Int?) {
@@ -21,6 +22,7 @@ enum class NoticeCategory(val displayName: String, val ntid: Int?) {
     IMPORTANT("Important", null),
     ADMISSION("Admission", 2),
     EXAM("Exam", 3),
-    TENDER("Tender", 4)
+    TENDER("Tender", 4),
+    HIDDEN_ARCHIVE("Hidden Notices", null)
 }
 

@@ -83,7 +83,7 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
                 val sorted = unique.sortedWith(
                     compareBy<Notice> { it.isArchived }
                         .thenByDescending { parseNoticeDate(it.date) }
-                        .thenByDescending { extractNmidNumber(it.id) }
+                        .thenBy { it.webOrder }
                 )
                 saveNoticesToCache(sorted)
                 sorted
@@ -115,7 +115,7 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
                 .get()
 
             val rows = doc.select("table tr")
-            for (row in rows) {
+            for ((index, row) in rows.withIndex()) {
                 val cells = row.select("td")
                 if (cells.size >= 2) {
                     val dateText = cells[0].text().trim()
@@ -149,7 +149,8 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
                             isNew = isNoticeNew(id),
                             isDownloaded = isDownloaded,
                             isImportant = isImportant,
-                            isArchived = isArchive
+                            isArchived = isArchive,
+                            webOrder = index
                         )
                     )
                 }
@@ -449,7 +450,8 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
                         isNew = !seenIds.contains(id),
                         isDownloaded = getDownloadedFileById(id, context) != null,
                         isImportant = obj.optBoolean("isImportant", false),
-                        isArchived = obj.optBoolean("isArchived", false)
+                        isArchived = obj.optBoolean("isArchived", false),
+                        webOrder = obj.optInt("webOrder", 0)
                     )
                 )
             }
@@ -473,6 +475,7 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
                     put("pdfUrl", n.pdfUrl)
                     put("isImportant", n.isImportant)
                     put("isArchived", n.isArchived)
+                    put("webOrder", n.webOrder)
                 }
                 array.put(obj)
             }

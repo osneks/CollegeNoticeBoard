@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Badge
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -331,6 +332,20 @@ fun MainScreen(
                             } else null,
                             onClick = {
                                 viewModel.selectCategory(NoticeCategory.TENDER)
+                                menuExpanded = false
+                            }
+                        )
+
+                        DropdownMenuItem(
+                            text = { Text("Hidden Notices", fontWeight = if (uiState.selectedCategory == NoticeCategory.HIDDEN_ARCHIVE) FontWeight.Bold else FontWeight.Normal) },
+                            leadingIcon = {
+                                Icon(Icons.Filled.VisibilityOff, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary)
+                            },
+                            trailingIcon = if (uiState.selectedCategory == NoticeCategory.HIDDEN_ARCHIVE) {
+                                { Icon(Icons.Filled.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary) }
+                            } else null,
+                            onClick = {
+                                viewModel.selectCategory(NoticeCategory.HIDDEN_ARCHIVE)
                                 menuExpanded = false
                             }
                         )
@@ -875,6 +890,22 @@ fun NoticeCard(
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    if (notice.isArchived) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                        ) {
+                            Text(
+                                "NOT ON MAIN BOARD",
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontWeight = FontWeight.Bold
                             )
                         }

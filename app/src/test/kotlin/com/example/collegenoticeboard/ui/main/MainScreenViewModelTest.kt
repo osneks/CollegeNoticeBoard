@@ -87,4 +87,30 @@ class NoticeModelTest {
         assertEquals("Live notice must sort first", "NMID_2448", sorted[0].id)
         assertEquals("Archived notice must sort after live notice", "NMID_78", sorted[1].id)
     }
+
+    @Test
+    fun testExactWebOrderPreservedForSameDateNotices() {
+        val notice1 = Notice(id = "NMID_2445", title = "Constitution Day", date = "23Nov2026", category = "All Notices", noticeUrl = "", pdfUrl = "", webOrder = 0)
+        val notice2 = Notice(id = "NMID_2446", title = "College Closed 24 Nov", date = "23Nov2026", category = "All Notices", noticeUrl = "", pdfUrl = "", webOrder = 1)
+        val notice3 = Notice(id = "NMID_2448", title = "Career Counselling", date = "23Nov2026", category = "All Notices", noticeUrl = "", pdfUrl = "", webOrder = 2)
+
+        val list = listOf(notice3, notice1, notice2)
+        val sorted = list.sortedWith(
+            compareBy<Notice> { it.isArchived }
+                .thenByDescending {
+                    val sdf = java.text.SimpleDateFormat("ddMMMyyyy", java.util.Locale.ENGLISH)
+                    sdf.parse(it.date)?.time ?: 0L
+                }
+                .thenBy { it.webOrder }
+        )
+
+        assertEquals("Position 1 must be Constitution Day", "NMID_2445", sorted[0].id)
+        assertEquals("Position 2 must be College Closed", "NMID_2446", sorted[1].id)
+        assertEquals("Position 3 must be Career Counselling", "NMID_2448", sorted[2].id)
+    }
+
+    @Test
+    fun testHiddenNoticesCategory() {
+        assertEquals("Hidden Notices", NoticeCategory.HIDDEN_ARCHIVE.displayName)
+    }
 }
