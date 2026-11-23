@@ -46,9 +46,23 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
                 else -> categoryConfigs.filter { it.first == category }
             }
 
+            val fetchEndpoints = mutableListOf<Triple<String, Int, Boolean>>()
+            // 1. Live feed first (newest daily circulars)
             for ((catEnum, ntid, catName) in targets) {
+                fetchEndpoints.add(Triple(catName, ntid, false))
+            }
+            // 2. Archive feed second (full historical circulars)
+            for ((catEnum, ntid, catName) in targets) {
+                fetchEndpoints.add(Triple(catName, ntid, true))
+            }
+
+            for ((catName, ntid, isArchive) in fetchEndpoints) {
                 try {
-                    val portalUrl = "$erpBaseUrl/NoticePortal/NoticeWebsite_bose.aspx?ntid=$ntid&A=A"
+                    val portalUrl = if (isArchive) {
+                        "$erpBaseUrl/NoticePortal/NoticeWebsite_bose.aspx?ntid=$ntid&A=A"
+                    } else {
+                        "$erpBaseUrl/NoticePortal/NoticeWebsite_bose.aspx?ntid=$ntid"
+                    }
                     val doc: Document = Jsoup.connect(portalUrl)
                         .userAgent("Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
                         .timeout(15000)
@@ -75,6 +89,8 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
                                 "HASH_${titleText.hashCode()}"
                             }
 
+                            val isImportant = checkIsImportant(titleText, catName)
+
                             notices.add(
                                 Notice(
                                     id = id,
@@ -84,7 +100,7 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
                                     noticeUrl = noticeUrl,
                                     pdfUrl = "", // resolved on-demand or during download
                                     isNew = isNoticeNew(id),
-                                    isImportant = false
+                                    isImportant = isImportant
                                 )
                             )
                         }

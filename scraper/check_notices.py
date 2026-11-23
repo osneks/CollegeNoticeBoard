@@ -38,9 +38,18 @@ def fetch_notices():
     seen_in_batch = set()
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
+    # Fetch both Live notices (no A=A) and Archive notices (&A=A)
+    # Live notices come first so the newest circulars have priority
+    endpoints = []
     for cat in CATEGORIES:
+        endpoints.append({"name": cat["name"], "ntid": cat["ntid"], "is_archive": False})
+    for cat in CATEGORIES:
+        endpoints.append({"name": cat["name"], "ntid": cat["ntid"], "is_archive": True})
+
+    for ep in endpoints:
         try:
-            url = f"{BASE_ERP_URL}/NoticePortal/NoticeWebsite_bose.aspx?ntid={cat['ntid']}&A=A"
+            suffix = "&A=A" if ep["is_archive"] else ""
+            url = f"{BASE_ERP_URL}/NoticePortal/NoticeWebsite_bose.aspx?ntid={ep['ntid']}{suffix}"
             req = urllib.request.Request(url, headers=headers)
             content = urllib.request.urlopen(req, timeout=15).read().decode("utf-8", errors="ignore")
 
@@ -75,18 +84,18 @@ def fetch_notices():
                         continue
                     seen_in_batch.add(notice_id)
 
-                    is_important = check_is_important(title_text, cat['name'])
+                    is_important = check_is_important(title_text, ep['name'])
 
                     all_notices.append({
                         "id": notice_id,
                         "title": title_text,
                         "date": date_text,
-                        "category": cat["name"],
+                        "category": ep["name"],
                         "url": link,
                         "is_important": is_important
                     })
         except Exception as e:
-            print(f"Error scraping {cat['name']}: {e}")
+            print(f"Error scraping {ep['name']} (archive={ep['is_archive']}): {e}")
 
     return all_notices
 
