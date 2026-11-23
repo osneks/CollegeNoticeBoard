@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.PriorityHigh
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.Badge
@@ -59,7 +60,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -108,14 +108,17 @@ fun MainScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
     var menuExpanded by remember { mutableStateOf(false) }
-    var viewingNotice by remember { mutableStateOf<Notice?>(null) }
+    var webViewNotice by remember { mutableStateOf<Notice?>(null) }
 
-    // Auto-focus or open notification deep-linked circular reactively without forced download
+    // Auto-open deep-linked notification in Google Drive / Docs (classic way)
     val pendingNoticeUrl by com.example.collegenoticeboard.MainActivity.pendingNoticeUrl.collectAsStateWithLifecycle()
     LaunchedEffect(pendingNoticeUrl) {
         pendingNoticeUrl?.let { url ->
             com.example.collegenoticeboard.MainActivity.pendingNoticeUrl.value = null
-            viewingNotice = viewModel.findNoticeForUrl(url)
+            val notice = viewModel.findNoticeForUrl(url)
+            viewModel.openPdf(notice) { file ->
+                openPdfInDriveOrDocs(context, file)
+            }
         }
     }
 
@@ -257,7 +260,6 @@ fun MainScreen(
                         expanded = menuExpanded,
                         onDismissRequest = { menuExpanded = false }
                     ) {
-                        // 1. All Notices
                         DropdownMenuItem(
                             text = { Text("All Notices", fontWeight = if (uiState.selectedCategory == NoticeCategory.ALL) FontWeight.Bold else FontWeight.Normal) },
                             leadingIcon = {
@@ -272,7 +274,6 @@ fun MainScreen(
                             }
                         )
 
-                        // 2. Urgent / Important Notices
                         DropdownMenuItem(
                             text = { Text("Urgent & Important", fontWeight = if (uiState.selectedCategory == NoticeCategory.IMPORTANT) FontWeight.Bold else FontWeight.Normal) },
                             leadingIcon = {
@@ -287,7 +288,6 @@ fun MainScreen(
                             }
                         )
 
-                        // 3. Admission Notices
                         DropdownMenuItem(
                             text = { Text("Admission", fontWeight = if (uiState.selectedCategory == NoticeCategory.ADMISSION) FontWeight.Bold else FontWeight.Normal) },
                             leadingIcon = {
@@ -302,7 +302,6 @@ fun MainScreen(
                             }
                         )
 
-                        // 4. Examination Notices
                         DropdownMenuItem(
                             text = { Text("Exam", fontWeight = if (uiState.selectedCategory == NoticeCategory.EXAM) FontWeight.Bold else FontWeight.Normal) },
                             leadingIcon = {
@@ -317,7 +316,6 @@ fun MainScreen(
                             }
                         )
 
-                        // 5. Tender Notices
                         DropdownMenuItem(
                             text = { Text("Tender", fontWeight = if (uiState.selectedCategory == NoticeCategory.TENDER) FontWeight.Bold else FontWeight.Normal) },
                             leadingIcon = {
@@ -428,7 +426,6 @@ fun MainScreen(
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                         state = rememberLazyListState()
                     ) {
-                        // Stats card at the top
                         item {
                             StatsCard(
                                 totalNotices = displayNotices.size,
@@ -446,32 +443,31 @@ fun MainScreen(
                                 notice = notice,
                                 isLoading = uiState.loadingNoticeIds.contains(notice.id),
                                 isDownloaded = isDownloaded,
-                                onViewOnline = {
-                                    viewingNotice = notice
+                                onOpenDriveOrDocs = {
+                                    // Primary classic action: Open in Google Drive / Docs!
+                                    viewModel.openPdf(notice) { file ->
+                                        openPdfInDriveOrDocs(context, file)
+                                    }
                                 },
                                 onDownload = {
-                                    viewModel.downloadPdfOnly(notice)
+                                    // Option 1: Download directly to phone's public Downloads folder
+                                    viewModel.downloadPdfToPublicFolder(notice) { success, msg ->
+                                        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                    }
                                 },
-                                onOpenDownloaded = {
-                                    uiState.downloadedFiles[notice.id]?.let { file ->
-                                        openPdfInDriveOrDocs(context, file)
+                                onOpenWebView = {
+                                    // Option 2: Open in-app WebView
+                                    webViewNotice = notice
+                                },
+                                onShare = {
+                                    // Option 3: Share PDF
+                                    viewModel.sharePdf(notice) { file ->
+                                        sharePdf(context, file, notice.title)
                                     }
                                 },
                                 onDeleteDownloaded = {
                                     viewModel.deleteDownloadedPdf(notice)
-                                },
-                                onOpenUrl = {
-                                    val urlToOpen = notice.noticeUrl.ifBlank { notice.pdfUrl }
-                                    if (urlToOpen.isNotBlank() && isValidCollegeUrl(urlToOpen)) {
-                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(urlToOpen)).apply {
-                                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                        }
-                                        try {
-                                            context.startActivity(intent)
-                                        } catch (_: Exception) {
-                                            Toast.makeText(context, "Cannot open URL", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
+                                    Toast.makeText(context, "Removed from offline cache", Toast.LENGTH_SHORT).show()
                                 }
                             )
                         }
@@ -483,20 +479,27 @@ fun MainScreen(
         }
     }
 
-    // In-App Notice Viewer Dialog (Views online without forcing a PDF download)
-    if (viewingNotice != null) {
-        val notice = viewingNotice!!
+    // Optional In-App WebView Dialog (only when user explicitly taps the WebView option)
+    if (webViewNotice != null) {
+        val notice = webViewNotice!!
         val isDownloaded = uiState.downloadedFiles.containsKey(notice.id)
         NoticeViewDialog(
             notice = notice,
             isDownloaded = isDownloaded,
             isDownloading = uiState.loadingNoticeIds.contains(notice.id),
-            onDownload = {
-                viewModel.downloadPdfOnly(notice)
-            },
-            onOpenDownloaded = {
-                uiState.downloadedFiles[notice.id]?.let { file ->
+            onOpenDriveOrDocs = {
+                viewModel.openPdf(notice) { file ->
                     openPdfInDriveOrDocs(context, file)
+                }
+            },
+            onDownload = {
+                viewModel.downloadPdfToPublicFolder(notice) { success, msg ->
+                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                }
+            },
+            onShare = {
+                viewModel.sharePdf(notice) { file ->
+                    sharePdf(context, file, notice.title)
                 }
             },
             onOpenBrowser = {
@@ -512,22 +515,22 @@ fun MainScreen(
                     }
                 }
             },
-            onDismiss = { viewingNotice = null }
+            onDismiss = { webViewNotice = null }
         )
     }
 }
 
 /**
- * Clean full-screen Dialog to read notice details and documents online
- * without downloading any file to storage.
+ * Optional In-App WebView Dialog for users who explicitly choose the WebView option.
  */
 @Composable
 fun NoticeViewDialog(
     notice: Notice,
     isDownloaded: Boolean,
     isDownloading: Boolean,
+    onOpenDriveOrDocs: () -> Unit,
     onDownload: () -> Unit,
-    onOpenDownloaded: () -> Unit,
+    onShare: () -> Unit,
     onOpenBrowser: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -552,7 +555,6 @@ fun NoticeViewDialog(
             color = MaterialTheme.colorScheme.background
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                // Top App Bar
                 TopAppBar(
                     title = {
                         Column {
@@ -575,51 +577,26 @@ fun NoticeViewDialog(
                         }
                     },
                     actions = {
-                        if (isDownloaded) {
-                            FilledTonalButton(
-                                onClick = onOpenDownloaded,
-                                modifier = Modifier.height(36.dp),
-                                contentPadding = PaddingValues(horizontal = 10.dp)
-                            ) {
-                                Icon(
-                                    Icons.Filled.PictureAsPdf,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(Modifier.width(4.dp))
-                                Text("Open PDF", style = MaterialTheme.typography.labelSmall)
-                            }
-                        } else {
-                            FilledTonalButton(
-                                onClick = onDownload,
-                                enabled = !isDownloading,
-                                modifier = Modifier.height(36.dp),
-                                contentPadding = PaddingValues(horizontal = 10.dp)
-                            ) {
-                                if (isDownloading) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(14.dp),
-                                        strokeWidth = 2.dp
-                                    )
-                                    Spacer(Modifier.width(4.dp))
-                                    Text("Saving...", style = MaterialTheme.typography.labelSmall)
-                                } else {
-                                    Icon(
-                                        Icons.Filled.Download,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(Modifier.width(4.dp))
-                                    Text("Download", style = MaterialTheme.typography.labelSmall)
-                                }
-                            }
+                        FilledTonalButton(
+                            onClick = onOpenDriveOrDocs,
+                            modifier = Modifier.height(36.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp)
+                        ) {
+                            Icon(Icons.Filled.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Drive/Docs", style = MaterialTheme.typography.labelSmall)
+                        }
+
+                        IconButton(onClick = onDownload, enabled = !isDownloading) {
+                            Icon(Icons.Filled.Download, contentDescription = "Download")
+                        }
+
+                        IconButton(onClick = onShare) {
+                            Icon(Icons.Filled.Share, contentDescription = "Share PDF")
                         }
 
                         IconButton(onClick = onOpenBrowser) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.OpenInNew,
-                                contentDescription = "Open in browser"
-                            )
+                            Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = "Open in browser")
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
@@ -634,7 +611,6 @@ fun NoticeViewDialog(
                     )
                 }
 
-                // In-App Web View to read without downloading
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
                     factory = { ctx ->
@@ -680,6 +656,30 @@ fun openPdfInDriveOrDocs(context: Context, file: File) {
         context.startActivity(intent)
     } catch (_: Exception) {
         Toast.makeText(context, "No PDF viewer found on device", Toast.LENGTH_SHORT).show()
+    }
+}
+
+fun sharePdf(context: Context, file: File, title: String) {
+    try {
+        val uri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            file
+        )
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "application/pdf"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_SUBJECT, title)
+            putExtra(Intent.EXTRA_TEXT, "AJC Bose College Notice: $title")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        val chooser = Intent.createChooser(intent, "Share Notice PDF").apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(chooser)
+    } catch (_: Exception) {
+        Toast.makeText(context, "Cannot share PDF", Toast.LENGTH_SHORT).show()
     }
 }
 
@@ -761,17 +761,14 @@ fun NoticeCard(
     notice: Notice,
     isLoading: Boolean,
     isDownloaded: Boolean,
-    onViewOnline: () -> Unit,
+    onOpenDriveOrDocs: () -> Unit,
     onDownload: () -> Unit,
-    onOpenDownloaded: () -> Unit,
-    onDeleteDownloaded: () -> Unit,
-    onOpenUrl: () -> Unit
+    onOpenWebView: () -> Unit,
+    onShare: () -> Unit,
+    onDeleteDownloaded: () -> Unit
 ) {
     OutlinedCard(
-        onClick = {
-            // Tapping card opens the online view without forcing a download
-            if (isDownloaded) onOpenDownloaded() else onViewOnline()
-        },
+        onClick = onOpenDriveOrDocs, // Card tap opens directly in Google Drive / Docs!
         modifier = Modifier
             .fillMaxWidth()
             .animateContentSize(
@@ -884,7 +881,7 @@ fun NoticeCard(
                 )
             }
 
-            // Downloading progress indicator
+            // Opening in Google Drive / Docs progress indicator
             if (isLoading) {
                 Spacer(Modifier.height(12.dp))
                 LinearProgressIndicator(
@@ -895,7 +892,7 @@ fun NoticeCard(
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "Downloading PDF document...",
+                    "Opening in Google Drive / Docs...",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary
                 )
@@ -903,84 +900,91 @@ fun NoticeCard(
 
             Spacer(Modifier.height(12.dp))
 
-            // Action buttons: Clearly separating Viewing Online from Downloading
+            // Action row: Primary "Drive / Docs" button + Options (Download, WebView, Share)
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // If downloaded, allow deleting to free device storage
-                if (isDownloaded) {
+                // 1. Primary "Drive / Docs" Button (the classic default way)
+                FilledTonalButton(
+                    onClick = onOpenDriveOrDocs,
+                    enabled = !isLoading,
+                    modifier = Modifier.height(38.dp),
+                    contentPadding = PaddingValues(horizontal = 14.dp)
+                ) {
+                    Icon(
+                        Icons.Filled.PictureAsPdf,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        "Drive / Docs",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                // Options: Download, WebView, Share, Delete
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    // Option 1: Download to phone
                     IconButton(
-                        onClick = onDeleteDownloaded,
+                        onClick = onDownload,
+                        enabled = !isLoading,
                         modifier = Modifier.size(36.dp)
                     ) {
                         Icon(
-                            Icons.Filled.DeleteOutline,
-                            contentDescription = "Delete downloaded PDF",
-                            modifier = Modifier.size(18.dp),
+                            Icons.Filled.Download,
+                            contentDescription = "Download PDF",
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+
+                    // Option 2: WebView
+                    IconButton(
+                        onClick = onOpenWebView,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            Icons.Filled.Visibility,
+                            contentDescription = "Open in WebView",
+                            modifier = Modifier.size(20.dp),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Spacer(Modifier.width(4.dp))
-                }
 
-                // 1. Separate "View Online" button (Reads online without saving/downloading)
-                OutlinedButton(
-                    onClick = onViewOnline,
-                    modifier = Modifier.height(36.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                ) {
-                    Icon(
-                        Icons.Filled.Visibility,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Text("View", style = MaterialTheme.typography.labelMedium)
-                }
-
-                Spacer(Modifier.width(8.dp))
-
-                // 2. Separate "Download" / "Open PDF" button
-                if (isDownloaded) {
-                    FilledTonalButton(
-                        onClick = onOpenDownloaded,
-                        modifier = Modifier.height(36.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp)
+                    // Option 3: Share PDF
+                    IconButton(
+                        onClick = onShare,
+                        enabled = !isLoading,
+                        modifier = Modifier.size(36.dp)
                     ) {
                         Icon(
-                            Icons.Filled.PictureAsPdf,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                            tint = MaterialTheme.colorScheme.primary
+                            Icons.Filled.Share,
+                            contentDescription = "Share PDF",
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Spacer(Modifier.width(4.dp))
-                        Text("Open PDF", style = MaterialTheme.typography.labelMedium)
                     }
-                } else {
-                    FilledTonalButton(
-                        onClick = onDownload,
-                        enabled = !isLoading,
-                        modifier = Modifier.height(36.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp)
-                    ) {
-                        if (isLoading) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(16.dp),
-                                strokeWidth = 2.dp
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text("Saving...", style = MaterialTheme.typography.labelMedium)
-                        } else {
+
+                    // Option 4: Delete from offline cache if saved
+                    if (isDownloaded) {
+                        IconButton(
+                            onClick = onDeleteDownloaded,
+                            modifier = Modifier.size(36.dp)
+                        ) {
                             Icon(
-                                Icons.Filled.Download,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
+                                Icons.Filled.DeleteOutline,
+                                contentDescription = "Delete cached PDF",
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.outline
                             )
-                            Spacer(Modifier.width(4.dp))
-                            Text("Download", style = MaterialTheme.typography.labelMedium)
                         }
                     }
                 }

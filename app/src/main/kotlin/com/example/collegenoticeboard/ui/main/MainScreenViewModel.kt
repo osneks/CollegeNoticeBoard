@@ -1,6 +1,10 @@
 package com.example.collegenoticeboard.ui.main
 
 import android.app.Application
+import android.content.ContentValues
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.collegenoticeboard.data.DefaultNoticeRepository
@@ -200,6 +204,94 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
             }
             if (file != null) {
                 onComplete?.invoke(file)
+            }
+        }
+    }
+
+    fun downloadPdfToPublicFolder(notice: Notice, onResult: (Boolean, String) -> Unit) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(loadingNoticeIds = it.loadingNoticeIds + notice.id) }
+            val ctx = getApplication<Application>()
+            val cacheFile = repository.downloadPdf(notice, ctx)
+            if (cacheFile == null) {
+                _uiState.update { state ->
+                    state.copy(
+                        loadingNoticeIds = state.loadingNoticeIds - notice.id,
+                        error = "Failed to download notice"
+                    )
+                }
+                onResult(false, "Failed to download notice")
+                return@launch
+            }
+
+            // Save to public Downloads directory
+            val cleanTitle = notice.title.replace(Regex("[^a-zA-Z0-9._-]"), "_").take(50)
+            val fileName = "AJCBose_${cleanTitle}.pdf"
+            val success = withContext(Dispatchers.IO) {
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        val values = ContentValues().apply {
+                            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                            put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
+                            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                        }
+                        val resolver = ctx.contentResolver
+                        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                        if (uri != null) {
+                            resolver.openOutputStream(uri)?.use { out ->
+                                cacheFile.inputStream().use { input -> input.copyTo(out) }
+                            }
+                            true
+                        } else false
+                    } else {
+                        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                        if (!downloadsDir.exists()) downloadsDir.mkdirs()
+                        val destFile = File(downloadsDir, fileName)
+                        cacheFile.copyTo(destFile, overwrite = true)
+                        true
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    false
+                }
+            }
+
+            _uiState.update { state ->
+                state.copy(
+                    loadingNoticeIds = state.loadingNoticeIds - notice.id,
+                    downloadedFiles = state.downloadedFiles + (notice.id to cacheFile)
+                )
+            }
+
+            if (success) {
+                onResult(true, "Saved to Downloads: $fileName")
+            } else {
+                onResult(true, "Notice PDF downloaded")
+            }
+        }
+    }
+
+    fun sharePdf(notice: Notice, onReadyToShare: (File) -> Unit) {
+        val existing = _uiState.value.downloadedFiles[notice.id]
+        if (existing != null && existing.exists()) {
+            onReadyToShare(existing)
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(loadingNoticeIds = it.loadingNoticeIds + notice.id) }
+            val ctx = getApplication<Application>()
+            val file = repository.downloadPdf(notice, ctx)
+            _uiState.update { state ->
+                val newFiles = if (file != null) state.downloadedFiles + (notice.id to file) else state.downloadedFiles
+                state.copy(
+                    loadingNoticeIds = state.loadingNoticeIds - notice.id,
+                    downloadedFiles = newFiles,
+                    error = if (file == null) "Failed to prepare PDF for sharing" else null
+                )
+            }
+            if (file != null) {
+                onReadyToShare(file)
             }
         }
     }
