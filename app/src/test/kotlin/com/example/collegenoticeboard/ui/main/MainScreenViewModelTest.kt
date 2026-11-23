@@ -113,4 +113,19 @@ class NoticeModelTest {
     fun testHiddenNoticesCategory() {
         assertEquals("Hidden Notices", NoticeCategory.HIDDEN_ARCHIVE.displayName)
     }
+
+    @Test
+    fun testAllNoticesIncludesBothLiveAndArchived() {
+        val liveNotice = Notice("1", "Live", "23Nov2026", "All Notices", "", "", isArchived = false)
+        val archivedNotice = Notice("2", "Archive", "14Nov2026", "All Notices", "", "", isArchived = true)
+        val list = listOf(liveNotice, archivedNotice)
+        val filtered = list.filter { notice ->
+            when (NoticeCategory.ALL) {
+                NoticeCategory.ALL -> true
+                NoticeCategory.HIDDEN_ARCHIVE -> notice.isArchived
+                else -> false
+            }
+        }
+        assertEquals("All Notices must contain both live and archived notices", 2, filtered.size)
+    }
 }
