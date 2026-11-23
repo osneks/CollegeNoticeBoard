@@ -19,7 +19,7 @@ def send_notice(title, message, category="All Notices", is_important=False, nmid
         "topic": NTFY_TOPIC,
         "title": f"{'🚨 [IMPORTANT] ' if is_important else '📢 '}{category} Notice",
         "message": message,
-        "priority": 4 if is_important else 3,
+        "priority": 5 if is_important else 4,
         "tags": ["warning", "school"] if is_important else ["scroll", "school"],
         "click": url
     }

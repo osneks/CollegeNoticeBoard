@@ -35,7 +35,7 @@ import java.util.concurrent.TimeUnit
 object CloudPushManager {
 
     private const val TOPIC = "ajcbose_circulars_sec_9f7a2d81e"
-    private const val CHANNEL_ID = "college_notices_channel"
+    private const val CHANNEL_ID = "college_alerts_popup_v1"
     private const val NOTIFICATION_ID = 2001
 
     private var job: Job? = null
@@ -110,13 +110,17 @@ object CloudPushManager {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val manager = context.getSystemService(NotificationManager::class.java)
 
-            // Safe IMPORTANCE_DEFAULT channel: will NEVER steal focus from incoming phone calls
+            // High importance heads-up banner channel like messaging apps (WhatsApp / Telegram)
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "College Notice Board Notifications",
-                NotificationManager.IMPORTANCE_DEFAULT
+                "College Notice Alerts",
+                NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "Notifications for AJC Bose College notices"
+                description = "Instant pop-up alerts for new AJC Bose College circulars"
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0, 250, 150, 250)
+                enableLights(true)
+                lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
             }
             manager.createNotificationChannel(channel)
         }
@@ -147,8 +151,10 @@ object CloudPushManager {
             .setContentTitle(title)
             .setContentText(message)
             .setStyle(NotificationCompat.BigTextStyle().bigText(message))
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT) // Safe priority, does not hijack telecom
-            .setCategory(NotificationCompat.CATEGORY_EVENT)
+            .setPriority(NotificationCompat.PRIORITY_HIGH) // Heads-up pop-up banner
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setDefaults(NotificationCompat.DEFAULT_ALL)
+            .setVibrate(longArrayOf(0, 250, 150, 250))
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
             .build()

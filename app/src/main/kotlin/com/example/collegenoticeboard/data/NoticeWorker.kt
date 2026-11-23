@@ -25,8 +25,8 @@ class NoticeCheckWorker(
 ) : CoroutineWorker(context, workerParams) {
 
     companion object {
-        const val CHANNEL_ID = "notice_updates"
-        const val IMPORTANT_CHANNEL_ID = "important_notice_updates"
+        const val CHANNEL_ID = "notice_updates_popup_v1"
+        const val IMPORTANT_CHANNEL_ID = "important_notice_updates_popup_v1"
         const val NOTIFICATION_ID = 1001
         const val WORK_NAME = "notice_check_work"
 
@@ -54,14 +54,17 @@ class NoticeCheckWorker(
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val manager = context.getSystemService(NotificationManager::class.java)
 
-                // Regular notices channel
+                // High importance channel for heads-up pop-up banner notifications
                 val channel = NotificationChannel(
                     CHANNEL_ID,
                     "General Notice Updates",
-                    NotificationManager.IMPORTANCE_DEFAULT
+                    NotificationManager.IMPORTANCE_HIGH
                 ).apply {
-                    description = "Notifications for new AJC Bose College circulars"
+                    description = "Instant pop-up alerts for new AJC Bose College circulars"
                     enableVibration(true)
+                    vibrationPattern = longArrayOf(0, 250, 150, 250)
+                    enableLights(true)
+                    lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
                 }
                 manager.createNotificationChannel(channel)
 
@@ -73,6 +76,9 @@ class NoticeCheckWorker(
                 ).apply {
                     description = "Urgent alerts for exam schedules, deadlines, and form fill-ups"
                     enableVibration(true)
+                    vibrationPattern = longArrayOf(0, 300, 150, 300)
+                    enableLights(true)
+                    lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
                 }
                 manager.createNotificationChannel(importantChannel)
             }
@@ -117,7 +123,7 @@ class NoticeCheckWorker(
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val targetChannel = CHANNEL_ID
+        val targetChannel = if (newNotices.any { it.isImportant }) IMPORTANT_CHANNEL_ID else CHANNEL_ID
 
         val title = if (newNotices.size == 1) {
             "New Notice: ${latestNotice.category}"
@@ -147,7 +153,10 @@ class NoticeCheckWorker(
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(bigText))
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setPriority(NotificationCompat.PRIORITY_HIGH) // Pop-up heads-up banner
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setDefaults(NotificationCompat.DEFAULT_ALL)
+            .setVibrate(longArrayOf(0, 250, 150, 250))
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
             .build()

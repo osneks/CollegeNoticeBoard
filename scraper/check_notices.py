@@ -110,7 +110,7 @@ def send_push_notification(notice):
         "topic": NTFY_TOPIC,
         "title": title,
         "message": message,
-        "priority": 4 if notice["is_important"] else 3,
+        "priority": 5 if notice["is_important"] else 4,
         "tags": ["warning", "school"] if notice["is_important"] else ["scroll", "school"],
     }
     if notice.get("url"):

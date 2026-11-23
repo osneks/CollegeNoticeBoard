@@ -86,14 +86,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        // Connect only while the app is actively in use
         CloudPushManager.startListening(this)
     }
 
     override fun onStop() {
         super.onStop()
-        // Immediately disconnect all sockets and free connection pools when app is minimized/closed
-        CloudPushManager.stopListening()
+        // Keep push listener active while app process is alive so alerts pop up like WhatsApp
     }
 
     override fun onDestroy() {
