@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <files-path name="notices" path="notices/" />
-    <cache-path name="cache" path="." />
+    <cache-path name="notices_cache" path="notices/" />
     <external-files-path name="external_notices" path="notices/" />
 </paths>

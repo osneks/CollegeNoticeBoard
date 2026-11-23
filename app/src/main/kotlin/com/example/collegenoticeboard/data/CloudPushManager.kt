@@ -34,7 +34,7 @@ import java.util.concurrent.TimeUnit
  */
 object CloudPushManager {
 
-    private const val TOPIC = "ajc_bose_college_notices_2026"
+    private const val TOPIC = "ajcbose_circulars_sec_9f7a2d81e"
     private const val CHANNEL_ID = "college_notices_channel"
     private const val NOTIFICATION_ID = 2001
 
@@ -68,9 +68,11 @@ object CloudPushManager {
                         try {
                             val json = JSONObject(data)
                             if (json.optString("event") == "message") {
-                                val title = json.optString("title", "New College Notice")
-                                val message = json.optString("message", "")
-                                val clickUrl = json.optString("click", "")
+                                val title = json.optString("title", "New College Notice").take(150)
+                                val message = json.optString("message", "").take(500)
+                                val rawClick = json.optString("click", "")
+                                // Security: Sanitize clickUrl to ensure it cannot be spoofed to redirect to phishing or malware
+                                val clickUrl = if (isValidCollegeUrl(rawClick)) rawClick else ""
                                 showNotification(context.applicationContext, title, message, clickUrl)
                             }
                         } catch (e: Exception) {
@@ -160,6 +162,20 @@ object CloudPushManager {
             NotificationManagerCompat.from(context).notify(notificationId, notification)
         } catch (e: SecurityException) {
             // Permission check
+        }
+    }
+
+    private fun isValidCollegeUrl(url: String): Boolean {
+        if (url.isBlank()) return false
+        return try {
+            val uri = android.net.Uri.parse(url)
+            val scheme = uri.scheme?.lowercase() ?: return false
+            val host = uri.host?.lowercase() ?: return false
+            (scheme == "https" || scheme == "http") &&
+                (host == "ajcbosecollege.ac.in" || host.endsWith(".ajcbosecollege.ac.in") ||
+                 host == "ajcbosecollegeerp.in" || host.endsWith(".ajcbosecollegeerp.in"))
+        } catch (e: Exception) {
+            false
         }
     }
 }

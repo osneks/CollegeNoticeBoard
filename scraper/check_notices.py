@@ -9,7 +9,7 @@ import urllib.request
 # ==========================================
 # CONFIGURATION
 # ==========================================
-NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "ajc_bose_college_notices_2026")
+NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "ajcbose_circulars_sec_9f7a2d81e")
 SEEN_FILE = "seen_notices.json"
 BASE_ERP_URL = "https://ajcbosecollegeerp.in"
 

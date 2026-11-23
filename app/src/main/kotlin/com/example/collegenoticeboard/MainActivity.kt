@@ -66,8 +66,21 @@ class MainActivity : ComponentActivity() {
 
     private fun handleIntent(intent: Intent?) {
         val url = intent?.getStringExtra("NOTICE_URL")
-        if (!url.isNullOrBlank()) {
+        if (!url.isNullOrBlank() && isValidCollegeUrl(url)) {
             pendingNoticeUrl = url
+        }
+    }
+
+    private fun isValidCollegeUrl(url: String): Boolean {
+        return try {
+            val uri = android.net.Uri.parse(url)
+            val scheme = uri.scheme?.lowercase() ?: return false
+            val host = uri.host?.lowercase() ?: return false
+            (scheme == "https" || scheme == "http") &&
+                (host == "ajcbosecollege.ac.in" || host.endsWith(".ajcbosecollege.ac.in") ||
+                 host == "ajcbosecollegeerp.in" || host.endsWith(".ajcbosecollegeerp.in"))
+        } catch (e: Exception) {
+            false
         }
     }
 

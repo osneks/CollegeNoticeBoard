@@ -230,7 +230,12 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
 
             try {
                 val resolvedUrl = resolvePdfUrl(notice)
-                if (resolvedUrl.isBlank()) return@withContext null
+                if (resolvedUrl.isBlank() || !isAllowedDownloadUrl(resolvedUrl)) {
+                    return@withContext null
+                }
+
+                // Periodically prune stale notice cache (files > 30 days or cache > 50MB)
+                pruneNoticeCache(dir)
 
                 val url = URL(resolvedUrl)
                 val connection = (url.openConnection() as? java.net.HttpURLConnection) ?: url.openConnection()
@@ -248,9 +253,22 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
                 connection.connect()
 
                 val tempFile = File(dir, "${notice.id.hashCode()}_temp.tmp")
+                val maxAllowedBytes = 25 * 1024 * 1024L // 25 MB safety cap
+                var bytesReadTotal = 0L
+
                 connection.getInputStream().use { input ->
                     FileOutputStream(tempFile).use { output ->
-                        input.copyTo(output)
+                        val buffer = ByteArray(8192)
+                        var bytes = input.read(buffer)
+                        while (bytes >= 0) {
+                            bytesReadTotal += bytes
+                            if (bytesReadTotal > maxAllowedBytes) {
+                                tempFile.delete()
+                                return@withContext null
+                            }
+                            output.write(buffer, 0, bytes)
+                            bytes = input.read(buffer)
+                        }
                     }
                 }
 
@@ -267,6 +285,53 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
                 null
             }
         }
+
+    private fun isAllowedDownloadUrl(urlStr: String): Boolean {
+        return try {
+            val url = URL(urlStr)
+            val scheme = url.protocol?.lowercase() ?: return false
+            val host = url.host?.lowercase() ?: return false
+            (scheme == "https" || scheme == "http") &&
+                (host == "ajcbosecollege.ac.in" || host.endsWith(".ajcbosecollege.ac.in") ||
+                 host == "ajcbosecollegeerp.in" || host.endsWith(".ajcbosecollegeerp.in"))
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun pruneNoticeCache(dir: File) {
+        try {
+            val files = dir.listFiles() ?: return
+            val now = System.currentTimeMillis()
+            val thirtyDaysMs = 30L * 24 * 60 * 60 * 1000
+            val maxCacheBytes = 50 * 1024 * 1024L // 50MB max cache size
+
+            var totalSize = 0L
+            val fileList = files.toList().sortedBy { it.lastModified() }
+
+            for (file in fileList) {
+                if (file.name.endsWith(".tmp")) {
+                    file.delete()
+                } else if (now - file.lastModified() > thirtyDaysMs) {
+                    file.delete()
+                } else {
+                    totalSize += file.length()
+                }
+            }
+
+            if (totalSize > maxCacheBytes) {
+                for (file in fileList) {
+                    if (file.exists()) {
+                        totalSize -= file.length()
+                        file.delete()
+                        if (totalSize <= maxCacheBytes) break
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
 
     private fun isValidPdf(file: File): Boolean {
         if (!file.exists() || file.length() < 100) return false

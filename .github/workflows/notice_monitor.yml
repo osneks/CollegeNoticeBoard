@@ -30,7 +30,7 @@ jobs:
 
       - name: Run Notice Scraper
         env:
-          NTFY_TOPIC: ${{ vars.NTFY_TOPIC || secrets.NTFY_TOPIC || 'ajc_bose_college_notices_2026' }}
+          NTFY_TOPIC: ${{ vars.NTFY_TOPIC || secrets.NTFY_TOPIC || 'ajcbose_circulars_sec_9f7a2d81e' }}
         run: |
           python scraper/check_notices.py
 

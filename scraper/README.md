@@ -24,7 +24,7 @@ flowchart LR
    - Scrapes the 4 official notice boards: All Notices (General), Admission, Exam, Tender.
    - Detects if any notice is marked as **Important** (Exams, Form Fill-ups, Deadlines, Merit lists).
    - Keeps track of historical notices in `seen_notices.json` to prevent duplicates.
-   - Pushes alert to your designated topic: `https://ntfy.sh/ajc_bose_college_notices_2026`.
+   - Pushes alert to your designated topic: `https://ntfy.sh/ajcbose_circulars_sec_9f7a2d81e`.
 
 ---
 
@@ -32,9 +32,9 @@ flowchart LR
 
 ### Method 1: In the App or via ntfy (Zero Configuration)
 1. Install **ntfy** from Google Play Store or F-Droid (lightweight, open-source push notification app).
-2. Tap `+` and subscribe to: `ajc_bose_college_notices_2026` (or any custom topic name you choose).
+2. Tap `+` and subscribe to: `ajcbose_circulars_sec_9f7a2d81e` (or any custom topic name you choose).
 3. You will now receive instant push alerts the moment AJC Bose College publishes a circular.
 
 ### Method 2: In Your Browser / Desktop
-- Open `https://ntfy.sh/ajc_bose_college_notices_2026` in Chrome/Firefox on PC or Android.
+- Open `https://ntfy.sh/ajcbose_circulars_sec_9f7a2d81e` in Chrome/Firefox on PC or Android.
 - Click **Subscribe** to enable desktop push notifications.
