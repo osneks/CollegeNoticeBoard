@@ -12,7 +12,8 @@ data class Notice(
     val pdfUrl: String,
     val isNew: Boolean = false,
     val isDownloaded: Boolean = false,
-    val isImportant: Boolean = false
+    val isImportant: Boolean = false,
+    val isArchived: Boolean = false
 )
 
 enum class NoticeCategory(val displayName: String, val ntid: Int?) {

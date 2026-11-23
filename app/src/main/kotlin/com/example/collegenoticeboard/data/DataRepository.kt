@@ -81,7 +81,8 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
             val finalNotices = if (scrapedNotices.isNotEmpty()) {
                 val unique = scrapedNotices.distinctBy { it.id }
                 val sorted = unique.sortedWith(
-                    compareByDescending<Notice> { parseNoticeDate(it.date) }
+                    compareBy<Notice> { it.isArchived }
+                        .thenByDescending { parseNoticeDate(it.date) }
                         .thenByDescending { extractNmidNumber(it.id) }
                 )
                 saveNoticesToCache(sorted)
@@ -147,7 +148,8 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
                             pdfUrl = "",
                             isNew = isNoticeNew(id),
                             isDownloaded = isDownloaded,
-                            isImportant = isImportant
+                            isImportant = isImportant,
+                            isArchived = isArchive
                         )
                     )
                 }
@@ -446,7 +448,8 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
                         pdfUrl = obj.optString("pdfUrl", ""),
                         isNew = !seenIds.contains(id),
                         isDownloaded = getDownloadedFileById(id, context) != null,
-                        isImportant = obj.optBoolean("isImportant", false)
+                        isImportant = obj.optBoolean("isImportant", false),
+                        isArchived = obj.optBoolean("isArchived", false)
                     )
                 )
             }
@@ -469,6 +472,7 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
                     put("noticeUrl", n.noticeUrl)
                     put("pdfUrl", n.pdfUrl)
                     put("isImportant", n.isImportant)
+                    put("isArchived", n.isArchived)
                 }
                 array.put(obj)
             }
@@ -493,7 +497,12 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
                 val sdf = SimpleDateFormat(pattern, Locale.ENGLISH)
                 sdf.isLenient = true
                 val parsed = sdf.parse(clean)
-                if (parsed != null) return parsed.time
+                if (parsed != null) {
+                    val time = parsed.time
+                    // Sanitize clerical typo future dates (e.g., 31Dec2026) so they sort by NMID
+                    val maxValidTime = System.currentTimeMillis() + 86_400_000L
+                    return if (time > maxValidTime) 0L else time
+                }
             } catch (_: Exception) {}
         }
         return 0L
