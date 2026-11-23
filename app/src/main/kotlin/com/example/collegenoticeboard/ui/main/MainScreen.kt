@@ -497,16 +497,6 @@ fun MainScreen(
             notice = notice,
             isDownloaded = isDownloaded,
             isDownloading = uiState.loadingNoticeIds.contains(notice.id),
-            onOpenDriveOrDocs = {
-                val downloaded = uiState.downloadedFiles[notice.id]
-                if (downloaded != null && downloaded.exists()) {
-                    openDownloadedPdfInViewer(context, downloaded)
-                } else {
-                    viewModel.openOnlineInDriveOrDocs(notice) { onlinePdfUrl ->
-                        openOnlineInDriveOrDocs(context, onlinePdfUrl)
-                    }
-                }
-            },
             onDownload = {
                 viewModel.downloadPdfToPublicFolder(notice) { success, msg ->
                     Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
@@ -543,7 +533,6 @@ fun NoticeViewDialog(
     notice: Notice,
     isDownloaded: Boolean,
     isDownloading: Boolean,
-    onOpenDriveOrDocs: () -> Unit,
     onDownload: () -> Unit,
     onShare: () -> Unit,
     onOpenBrowser: () -> Unit,
@@ -592,16 +581,6 @@ fun NoticeViewDialog(
                         }
                     },
                     actions = {
-                        FilledTonalButton(
-                            onClick = onOpenDriveOrDocs,
-                            modifier = Modifier.height(36.dp),
-                            contentPadding = PaddingValues(horizontal = 8.dp)
-                        ) {
-                            Icon(Icons.Filled.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Drive/Docs", style = MaterialTheme.typography.labelSmall)
-                        }
-
                         IconButton(onClick = onDownload, enabled = !isDownloading) {
                             Icon(Icons.Filled.Download, contentDescription = "Download")
                         }
@@ -950,92 +929,65 @@ fun NoticeCard(
 
             Spacer(Modifier.height(12.dp))
 
-            // Action row: Primary "Drive / Docs" button + Options (Download, WebView, Share)
+            // Action row: Options (Download, WebView, Share, Delete)
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // 1. Primary "Drive / Docs" Button (the classic default way)
-                FilledTonalButton(
-                    onClick = onOpenDriveOrDocs,
+                // Option 1: Download to phone
+                IconButton(
+                    onClick = onDownload,
                     enabled = !isLoading,
-                    modifier = Modifier.height(38.dp),
-                    contentPadding = PaddingValues(horizontal = 14.dp)
+                    modifier = Modifier.size(36.dp)
                 ) {
                     Icon(
-                        Icons.Filled.PictureAsPdf,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
+                        Icons.Filled.Download,
+                        contentDescription = "Download PDF",
+                        modifier = Modifier.size(20.dp),
                         tint = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        "Drive / Docs",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold
                     )
                 }
 
-                // Options: Download, WebView, Share, Delete
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                // Option 2: WebView
+                IconButton(
+                    onClick = onOpenWebView,
+                    modifier = Modifier.size(36.dp)
                 ) {
-                    // Option 1: Download to phone
+                    Icon(
+                        Icons.Filled.Visibility,
+                        contentDescription = "Open in WebView",
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                // Option 3: Share PDF
+                IconButton(
+                    onClick = onShare,
+                    enabled = !isLoading,
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(
+                        Icons.Filled.Share,
+                        contentDescription = "Share PDF",
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                // Option 4: Delete from offline cache if saved
+                if (isDownloaded) {
                     IconButton(
-                        onClick = onDownload,
-                        enabled = !isLoading,
+                        onClick = onDeleteDownloaded,
                         modifier = Modifier.size(36.dp)
                     ) {
                         Icon(
-                            Icons.Filled.Download,
-                            contentDescription = "Download PDF",
-                            modifier = Modifier.size(20.dp),
-                            tint = MaterialTheme.colorScheme.primary
+                            Icons.Filled.DeleteOutline,
+                            contentDescription = "Delete cached PDF",
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.outline
                         )
-                    }
-
-                    // Option 2: WebView
-                    IconButton(
-                        onClick = onOpenWebView,
-                        modifier = Modifier.size(36.dp)
-                    ) {
-                        Icon(
-                            Icons.Filled.Visibility,
-                            contentDescription = "Open in WebView",
-                            modifier = Modifier.size(20.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    // Option 3: Share PDF
-                    IconButton(
-                        onClick = onShare,
-                        enabled = !isLoading,
-                        modifier = Modifier.size(36.dp)
-                    ) {
-                        Icon(
-                            Icons.Filled.Share,
-                            contentDescription = "Share PDF",
-                            modifier = Modifier.size(20.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    // Option 4: Delete from offline cache if saved
-                    if (isDownloaded) {
-                        IconButton(
-                            onClick = onDeleteDownloaded,
-                            modifier = Modifier.size(36.dp)
-                        ) {
-                            Icon(
-                                Icons.Filled.DeleteOutline,
-                                contentDescription = "Delete cached PDF",
-                                modifier = Modifier.size(18.dp),
-                                tint = MaterialTheme.colorScheme.outline
-                            )
-                        }
                     }
                 }
             }
