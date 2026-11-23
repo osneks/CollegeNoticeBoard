@@ -324,15 +324,28 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
         )
     }
 
-    fun handlePendingNotice(url: String, onFileReady: (File) -> Unit) {
-        val notice = findNoticeForUrl(url)
-        val existing = _uiState.value.downloadedFiles[notice.id]
-        if (existing != null && existing.exists()) {
-            onFileReady(existing)
-        } else {
-            // Note: Does not force download unless openPdf is explicitly invoked
-            openPdf(notice, onFileReady)
+    fun openOnlineInDriveOrDocs(notice: Notice, onUrlResolved: (String) -> Unit) {
+        if (notice.pdfUrl.isNotBlank() && notice.pdfUrl.endsWith(".pdf", ignoreCase = true)) {
+            onUrlResolved(notice.pdfUrl)
+            return
         }
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(loadingNoticeIds = it.loadingNoticeIds + notice.id) }
+            val resolvedUrl = repository.resolvePdfUrl(notice)
+            _uiState.update { it.copy(loadingNoticeIds = it.loadingNoticeIds - notice.id) }
+            val finalUrl = if (resolvedUrl.isNotBlank()) resolvedUrl else notice.noticeUrl
+            if (finalUrl.isNotBlank()) {
+                onUrlResolved(finalUrl)
+            } else {
+                _uiState.update { it.copy(error = "Could not find notice document link") }
+            }
+        }
+    }
+
+    fun handlePendingNotice(url: String, onUrlResolved: (String) -> Unit) {
+        val notice = findNoticeForUrl(url)
+        openOnlineInDriveOrDocs(notice, onUrlResolved)
     }
 
     fun markAllAsSeen() {

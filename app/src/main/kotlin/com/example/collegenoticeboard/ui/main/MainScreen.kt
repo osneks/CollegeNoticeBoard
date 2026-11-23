@@ -110,14 +110,19 @@ fun MainScreen(
     var menuExpanded by remember { mutableStateOf(false) }
     var webViewNotice by remember { mutableStateOf<Notice?>(null) }
 
-    // Auto-open deep-linked notification in Google Drive / Docs (classic way)
+    // Auto-open deep-linked notification in Google Drive / Docs without downloading to disk
     val pendingNoticeUrl by com.example.collegenoticeboard.MainActivity.pendingNoticeUrl.collectAsStateWithLifecycle()
     LaunchedEffect(pendingNoticeUrl) {
         pendingNoticeUrl?.let { url ->
             com.example.collegenoticeboard.MainActivity.pendingNoticeUrl.value = null
             val notice = viewModel.findNoticeForUrl(url)
-            viewModel.openPdf(notice) { file ->
-                openPdfInDriveOrDocs(context, file)
+            val downloaded = uiState.downloadedFiles[notice.id]
+            if (downloaded != null && downloaded.exists()) {
+                openDownloadedPdfInViewer(context, downloaded)
+            } else {
+                viewModel.openOnlineInDriveOrDocs(notice) { onlinePdfUrl ->
+                    openOnlineInDriveOrDocs(context, onlinePdfUrl)
+                }
             }
         }
     }
@@ -444,9 +449,14 @@ fun MainScreen(
                                 isLoading = uiState.loadingNoticeIds.contains(notice.id),
                                 isDownloaded = isDownloaded,
                                 onOpenDriveOrDocs = {
-                                    // Primary classic action: Open in Google Drive / Docs!
-                                    viewModel.openPdf(notice) { file ->
-                                        openPdfInDriveOrDocs(context, file)
+                                    // Primary classic action: Open in Google Drive / Docs without downloading!
+                                    val downloaded = uiState.downloadedFiles[notice.id]
+                                    if (downloaded != null && downloaded.exists()) {
+                                        openDownloadedPdfInViewer(context, downloaded)
+                                    } else {
+                                        viewModel.openOnlineInDriveOrDocs(notice) { onlinePdfUrl ->
+                                            openOnlineInDriveOrDocs(context, onlinePdfUrl)
+                                        }
                                     }
                                 },
                                 onDownload = {
@@ -488,8 +498,13 @@ fun MainScreen(
             isDownloaded = isDownloaded,
             isDownloading = uiState.loadingNoticeIds.contains(notice.id),
             onOpenDriveOrDocs = {
-                viewModel.openPdf(notice) { file ->
-                    openPdfInDriveOrDocs(context, file)
+                val downloaded = uiState.downloadedFiles[notice.id]
+                if (downloaded != null && downloaded.exists()) {
+                    openDownloadedPdfInViewer(context, downloaded)
+                } else {
+                    viewModel.openOnlineInDriveOrDocs(notice) { onlinePdfUrl ->
+                        openOnlineInDriveOrDocs(context, onlinePdfUrl)
+                    }
                 }
             },
             onDownload = {
@@ -641,7 +656,42 @@ fun NoticeViewDialog(
     }
 }
 
-fun openPdfInDriveOrDocs(context: Context, file: File) {
+fun openOnlineInDriveOrDocs(context: Context, pdfUrl: String) {
+    // 1. Google Drive PDF Viewer (streaming directly from cloud, 0 bytes saved to device files)
+    try {
+        val driveIntent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(Uri.parse(pdfUrl), "application/pdf")
+            setPackage("com.google.android.apps.docs")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(driveIntent)
+        return
+    } catch (_: Exception) {}
+
+    // 2. Generic PDF Viewer supporting HTTP/HTTPS streaming
+    try {
+        val generalIntent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(Uri.parse(pdfUrl), "application/pdf")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(generalIntent)
+        return
+    } catch (_: Exception) {}
+
+    // 3. Google Docs Online Cloud Viewer
+    try {
+        val encoded = java.net.URLEncoder.encode(pdfUrl, "UTF-8")
+        val docsViewerUrl = "https://docs.google.com/viewer?url=$encoded"
+        val docsIntent = Intent(Intent.ACTION_VIEW, Uri.parse(docsViewerUrl)).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(docsIntent)
+    } catch (_: Exception) {
+        Toast.makeText(context, "Cannot open in Google Docs or Drive", Toast.LENGTH_SHORT).show()
+    }
+}
+
+fun openDownloadedPdfInViewer(context: Context, file: File) {
     val uri = FileProvider.getUriForFile(
         context,
         "${context.packageName}.fileprovider",
