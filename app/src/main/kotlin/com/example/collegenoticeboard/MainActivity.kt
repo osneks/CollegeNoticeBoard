@@ -15,6 +15,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import com.example.collegenoticeboard.data.CloudPushManager
+import com.example.collegenoticeboard.data.NoticeCheckWorker
 import com.example.collegenoticeboard.ui.theme.CollegeNoticeBoardTheme
 
 class MainActivity : ComponentActivity() {
@@ -31,6 +32,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         handleIntent(intent)
+
+        // Schedule periodic background notice check worker
+        NoticeCheckWorker.schedule(applicationContext)
 
         // Request notification permission on Android 13+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

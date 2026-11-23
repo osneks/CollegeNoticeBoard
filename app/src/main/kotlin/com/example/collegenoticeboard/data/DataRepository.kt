@@ -56,18 +56,24 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
                         .get()
 
                     val rows = doc.select("table tr")
-                    for ((index, row) in rows.withIndex()) {
+                    for (row in rows) {
                         val cells = row.select("td")
                         if (cells.size >= 2) {
                             val dateText = cells[0].text().trim()
-                            val titleText = cells[1].text().trim()
+                            val unescapedTitle = org.jsoup.parser.Parser.unescapeEntities(cells[1].text().trim(), false)
+                            val titleText = unescapedTitle.replace(Regex("\\s+"), " ").trim()
                             if (titleText.isBlank() || titleText.equals("Subject", ignoreCase = true)) continue
 
                             val link = row.select("a[href]").firstOrNull()
                             val href = link?.attr("abs:href")?.ifBlank { link.attr("href") } ?: ""
                             val noticeUrl = if (href.startsWith("http")) href else "$erpBaseUrl/$href"
 
-                            val id = "ALL_NOTICE_${ntid}_${index}_${titleText.hashCode()}"
+                            val nmidMatch = Regex("NMID=(\\d+)", RegexOption.IGNORE_CASE).find(href)
+                            val id = if (nmidMatch != null) {
+                                "NMID_${nmidMatch.groupValues[1]}"
+                            } else {
+                                "HASH_${titleText.hashCode()}"
+                            }
 
                             notices.add(
                                 Notice(
@@ -98,11 +104,17 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
                         .get()
 
                     val links = doc.select("a[href]")
-                    for ((index, link) in links.withIndex()) {
+                    for (link in links) {
                         val href = link.attr("abs:href").ifBlank { link.attr("href") }
-                        val text = link.text().trim()
+                        val unescapedText = org.jsoup.parser.Parser.unescapeEntities(link.text().trim(), false)
+                        val text = unescapedText.replace(Regex("\\s+"), " ").trim()
                         if (text.length > 8 && (href.contains("pdf", ignoreCase = true) || href.contains("notice", ignoreCase = true))) {
-                            val id = "FALLBACK_${index}_${text.hashCode()}"
+                            val nmidMatch = Regex("NMID=(\\d+)", RegexOption.IGNORE_CASE).find(href)
+                            val id = if (nmidMatch != null) {
+                                "NMID_${nmidMatch.groupValues[1]}"
+                            } else {
+                                "HASH_${text.hashCode()}"
+                            }
                             notices.add(
                                 Notice(
                                     id = id,

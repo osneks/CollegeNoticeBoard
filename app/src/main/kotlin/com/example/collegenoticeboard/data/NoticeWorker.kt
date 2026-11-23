@@ -85,11 +85,17 @@ class NoticeCheckWorker(
             val notices = repository.fetchNotices()
             val seenIds = repository.getSeenNoticeIds()
 
-            val newNotices = notices.filter { !seenIds.contains(it.id) }
+            if (seenIds.isEmpty()) {
+                // Initial run: seed existing notices without triggering alert spam
+                notices.forEach { repository.markNoticeAsSeen(it.id) }
+            } else {
+                val newNotices = notices.filter { !seenIds.contains(it.id) }
 
-            if (newNotices.isNotEmpty()) {
-                createNotificationChannel(applicationContext)
-                showNotification(newNotices)
+                if (newNotices.isNotEmpty()) {
+                    createNotificationChannel(applicationContext)
+                    showNotification(newNotices)
+                    newNotices.forEach { repository.markNoticeAsSeen(it.id) }
+                }
             }
 
             Result.success()
@@ -99,15 +105,18 @@ class NoticeCheckWorker(
     }
 
     private fun showNotification(newNotices: List<Notice>) {
+        val latestNotice = newNotices.first()
         val intent = Intent(applicationContext, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            if (newNotices.size == 1 && latestNotice.noticeUrl.isNotBlank()) {
+                putExtra("NOTICE_URL", latestNotice.noticeUrl)
+            }
         }
         val pendingIntent = PendingIntent.getActivity(
             applicationContext, 0, intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val latestNotice = newNotices.first()
         val targetChannel = CHANNEL_ID
 
         val title = if (newNotices.size == 1) {
@@ -144,8 +153,13 @@ class NoticeCheckWorker(
             .build()
 
         try {
+            val notificationId = if (newNotices.size == 1) {
+                (latestNotice.id.hashCode() and 0x7FFFFFFF)
+            } else {
+                NOTIFICATION_ID
+            }
             NotificationManagerCompat.from(applicationContext)
-                .notify(NOTIFICATION_ID, notification)
+                .notify(notificationId, notification)
         } catch (e: SecurityException) {
             // Notification permission not granted
         }

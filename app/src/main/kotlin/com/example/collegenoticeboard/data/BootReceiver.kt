@@ -6,6 +6,9 @@ import android.content.Intent
 
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
-        // Kept clean with zero background sockets to protect system telecom and phone services.
+        val action = intent?.action
+        if (action == Intent.ACTION_BOOT_COMPLETED || action == "android.intent.action.QUICKBOOT_POWERON") {
+            NoticeCheckWorker.schedule(context.applicationContext)
+        }
     }
 }

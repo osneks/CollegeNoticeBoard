@@ -152,7 +152,12 @@ object CloudPushManager {
             .build()
 
         try {
-            NotificationManagerCompat.from(context).notify(NOTIFICATION_ID, notification)
+            val notificationId = if (url.isNotBlank()) {
+                (url.hashCode() and 0x7FFFFFFF)
+            } else {
+                (System.currentTimeMillis() % 10000).toInt() + 2000
+            }
+            NotificationManagerCompat.from(context).notify(notificationId, notification)
         } catch (e: SecurityException) {
             // Permission check
         }
