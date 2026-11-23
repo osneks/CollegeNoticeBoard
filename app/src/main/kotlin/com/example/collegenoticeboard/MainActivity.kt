@@ -18,10 +18,12 @@ import com.example.collegenoticeboard.data.CloudPushManager
 import com.example.collegenoticeboard.data.NoticeCheckWorker
 import com.example.collegenoticeboard.ui.theme.CollegeNoticeBoardTheme
 
+import kotlinx.coroutines.flow.MutableStateFlow
+
 class MainActivity : ComponentActivity() {
 
     companion object {
-        var pendingNoticeUrl: String? = null
+        val pendingNoticeUrl = MutableStateFlow<String?>(null)
     }
 
     private val requestPermissionLauncher = registerForActivityResult(
@@ -67,7 +69,7 @@ class MainActivity : ComponentActivity() {
     private fun handleIntent(intent: Intent?) {
         val url = intent?.getStringExtra("NOTICE_URL")
         if (!url.isNullOrBlank() && isValidCollegeUrl(url)) {
-            pendingNoticeUrl = url
+            pendingNoticeUrl.value = url
         }
     }
 

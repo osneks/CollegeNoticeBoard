@@ -10,10 +10,13 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.example.collegenoticeboard.MainActivity
 import com.example.collegenoticeboard.R
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -23,37 +26,45 @@ import okhttp3.sse.EventSourceListener
 import okhttp3.sse.EventSources
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Lifecycle-safe, Telecom-safe Cloud Push Manager.
+ * Resilient, lifecycle-safe, Telecom-safe Cloud Push Manager.
  *
  * Ensures:
  * 1. ZERO interference with incoming phone call notifications, ringtones, or telecom services.
- * 2. Notification channels use standard IMPORTANCE_DEFAULT without overriding audio focus.
- * 3. Sockets are completely closed when the app goes into the background.
+ * 2. Automatic reconnect with backoff on network drop or Wi-Fi <-> mobile data transition.
+ * 3. Deduplication against WorkManager periodic background checks.
  */
 object CloudPushManager {
 
     private const val TOPIC = "ajcbose_circulars_sec_9f7a2d81e"
     private const val CHANNEL_ID = "college_alerts_popup_v1"
-    private const val NOTIFICATION_ID = 2001
 
     private var job: Job? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var eventSource: EventSource? = null
+    private val isListening = AtomicBoolean(false)
 
-    // Safe timeouts to avoid indefinitely dangling sockets
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
-        .retryOnConnectionFailure(false)
+        .retryOnConnectionFailure(true)
         .build()
 
     fun startListening(context: Context) {
-        stopListening() // Clean up any lingering connections first
+        if (isListening.getAndSet(true)) {
+            return
+        }
         createNotificationChannels(context)
 
         job = scope.launch {
+            connectSseLoop(context.applicationContext)
+        }
+    }
+
+    private suspend fun connectSseLoop(context: Context) {
+        while (isListening.get() && scope.isActive) {
             try {
                 val request = Request.Builder()
                     .url("https://ntfy.sh/$TOPIC/sse")
@@ -61,6 +72,8 @@ object CloudPushManager {
                     .build()
 
                 val sseFactory = EventSources.createFactory(client)
+                val disconnectSignal = CompletableDeferred<Unit>()
+
                 eventSource = sseFactory.newEventSource(request, object : EventSourceListener() {
                     override fun onOpen(eventSource: EventSource, response: Response) {}
 
@@ -71,29 +84,42 @@ object CloudPushManager {
                                 val title = json.optString("title", "New College Notice").take(150)
                                 val message = json.optString("message", "").take(500)
                                 val rawClick = json.optString("click", "")
-                                // Security: Sanitize clickUrl to ensure it cannot be spoofed to redirect to phishing or malware
                                 val clickUrl = if (isValidCollegeUrl(rawClick)) rawClick else ""
-                                showNotification(context.applicationContext, title, message, clickUrl)
+
+                                // Deduplicate against WorkManager by recording seen notice ID
+                                val nmidMatch = Regex("NMID=(\\d+)", RegexOption.IGNORE_CASE).find(clickUrl)
+                                if (nmidMatch != null) {
+                                    val noticeId = "NMID_${nmidMatch.groupValues[1]}"
+                                    DefaultNoticeRepository(context).markNoticeAsSeen(noticeId)
+                                }
+
+                                showNotification(context, title, message, clickUrl)
                             }
                         } catch (e: Exception) {
                             e.printStackTrace()
                         }
                     }
 
-                    override fun onClosed(eventSource: EventSource) {}
-                    override fun onFailure(eventSource: EventSource, t: Throwable?, response: Response?) {}
+                    override fun onClosed(eventSource: EventSource) {
+                        disconnectSignal.complete(Unit)
+                    }
+
+                    override fun onFailure(eventSource: EventSource, t: Throwable?, response: Response?) {
+                        disconnectSignal.complete(Unit)
+                    }
                 })
-            } catch (e: Exception) {
-                e.printStackTrace()
+
+                disconnectSignal.await()
+            } catch (_: Exception) {}
+
+            if (isListening.get() && scope.isActive) {
+                delay(3000)
             }
         }
     }
 
-    /**
-     * Completely shuts down the SSE connection and connection pool
-     * to guarantee zero battery drain and zero socket/notification interference.
-     */
     fun stopListening() {
+        isListening.set(false)
         try {
             eventSource?.cancel()
             eventSource = null
@@ -110,7 +136,6 @@ object CloudPushManager {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val manager = context.getSystemService(NotificationManager::class.java)
 
-            // High importance heads-up banner channel like messaging apps (WhatsApp / Telegram)
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "College Notice Alerts",
@@ -133,7 +158,7 @@ object CloudPushManager {
         url: String
     ) {
         val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
             if (url.isNotBlank()) {
                 putExtra("NOTICE_URL", url)
             }
@@ -151,7 +176,7 @@ object CloudPushManager {
             .setContentTitle(title)
             .setContentText(message)
             .setStyle(NotificationCompat.BigTextStyle().bigText(message))
-            .setPriority(NotificationCompat.PRIORITY_HIGH) // Heads-up pop-up banner
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setDefaults(NotificationCompat.DEFAULT_ALL)
             .setVibrate(longArrayOf(0, 250, 150, 250))
@@ -166,9 +191,7 @@ object CloudPushManager {
                 (System.currentTimeMillis() % 10000).toInt() + 2000
             }
             NotificationManagerCompat.from(context).notify(notificationId, notification)
-        } catch (e: SecurityException) {
-            // Permission check
-        }
+        } catch (_: SecurityException) {}
     }
 
     private fun isValidCollegeUrl(url: String): Boolean {

@@ -77,7 +77,7 @@ def fetch_notices():
                     if nmid_match:
                         notice_id = f"NMID_{nmid_match.group(1)}"
                     else:
-                        digest = hashlib.sha256(title_text.encode("utf-8")).hexdigest()[:16]
+                        digest = hashlib.sha256(f"{date_text}_{title_text}".encode("utf-8")).hexdigest()[:16]
                         notice_id = f"HASH_{digest}"
 
                     if notice_id in seen_in_batch:

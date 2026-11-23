@@ -3,12 +3,23 @@ package com.example.collegenoticeboard.data
 import android.content.Context
 import android.content.SharedPreferences
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.json.JSONArray
+import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import java.io.File
 import java.io.FileOutputStream
 import java.net.URL
+import java.security.MessageDigest
+import java.text.SimpleDateFormat
+import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 interface NoticeRepository {
     suspend fun fetchNotices(category: NoticeCategory = NoticeCategory.ALL): List<Notice>
@@ -17,7 +28,9 @@ interface NoticeRepository {
     fun getDownloadedFile(notice: Notice, context: Context): File?
     fun isNoticeNew(noticeId: String): Boolean
     fun markNoticeAsSeen(noticeId: String)
+    fun markNoticesAsSeen(noticeIds: Collection<String>)
     fun getSeenNoticeIds(): Set<String>
+    fun loadCachedNotices(): List<Notice>
 }
 
 class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
@@ -25,15 +38,19 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
     private val prefs: SharedPreferences =
         context.getSharedPreferences("notice_prefs", Context.MODE_PRIVATE)
 
-    private val allNoticesUrl = "https://www.ajcbosecollege.ac.in/all-notice.html"
     private val erpBaseUrl = "https://ajcbosecollegeerp.in"
+    private val allNoticesUrl = "https://www.ajcbosecollege.ac.in/all-notice.html"
+
+    private val httpClient = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .followSslRedirects(true)
+        .retryOnConnectionFailure(true)
+        .build()
 
     override suspend fun fetchNotices(category: NoticeCategory): List<Notice> =
         withContext(Dispatchers.IO) {
-            val notices = mutableListOf<Notice>()
-
-            // Categories mapping directly to the tabs on https://www.ajcbosecollege.ac.in/all-notice.html
-            // Note: General notices (ntid=1) are the main "All Notices" feed on the college portal
             val categoryConfigs = listOf(
                 Triple(NoticeCategory.ALL, 1, "All Notices"),
                 Triple(NoticeCategory.ADMISSION, 2, "Admission"),
@@ -41,117 +58,146 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
                 Triple(NoticeCategory.TENDER, 4, "Tender")
             )
 
-            val targets = when (category) {
-                NoticeCategory.ALL, NoticeCategory.IMPORTANT -> categoryConfigs
-                else -> categoryConfigs.filter { it.first == category }
-            }
+            val endpoints = mutableListOf<Triple<String, Int, Boolean>>()
+            // Specific categories first in live feed
+            endpoints.add(Triple("Exam", 3, false))
+            endpoints.add(Triple("Admission", 2, false))
+            endpoints.add(Triple("Tender", 4, false))
+            endpoints.add(Triple("All Notices", 1, false))
+            // Archive feeds
+            endpoints.add(Triple("Exam", 3, true))
+            endpoints.add(Triple("Admission", 2, true))
+            endpoints.add(Triple("Tender", 4, true))
+            endpoints.add(Triple("All Notices", 1, true))
 
-            val fetchEndpoints = mutableListOf<Triple<String, Int, Boolean>>()
-            // 1. Live feed first (newest daily circulars)
-            for ((catEnum, ntid, catName) in targets) {
-                fetchEndpoints.add(Triple(catName, ntid, false))
-            }
-            // 2. Archive feed second (full historical circulars)
-            for ((catEnum, ntid, catName) in targets) {
-                fetchEndpoints.add(Triple(catName, ntid, true))
-            }
-
-            for ((catName, ntid, isArchive) in fetchEndpoints) {
-                try {
-                    val portalUrl = if (isArchive) {
-                        "$erpBaseUrl/NoticePortal/NoticeWebsite_bose.aspx?ntid=$ntid&A=A"
-                    } else {
-                        "$erpBaseUrl/NoticePortal/NoticeWebsite_bose.aspx?ntid=$ntid"
+            val scrapedNotices = coroutineScope {
+                endpoints.map { (catName, ntid, isArchive) ->
+                    async(Dispatchers.IO) {
+                        fetchEndpoint(catName, ntid, isArchive)
                     }
-                    val doc: Document = Jsoup.connect(portalUrl)
-                        .userAgent("Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
-                        .timeout(15000)
-                        .followRedirects(true)
-                        .get()
+                }.awaitAll().flatten()
+            }
 
-                    val rows = doc.select("table tr")
-                    for (row in rows) {
-                        val cells = row.select("td")
-                        if (cells.size >= 2) {
-                            val dateText = cells[0].text().trim()
-                            val unescapedTitle = org.jsoup.parser.Parser.unescapeEntities(cells[1].text().trim(), false)
-                            val titleText = unescapedTitle.replace(Regex("\\s+"), " ").trim()
-                            if (titleText.isBlank() || titleText.equals("Subject", ignoreCase = true)) continue
-
-                            val link = row.select("a[href]").firstOrNull()
-                            val href = link?.attr("abs:href")?.ifBlank { link.attr("href") } ?: ""
-                            val noticeUrl = if (href.startsWith("http")) href else "$erpBaseUrl/$href"
-
-                            val nmidMatch = Regex("NMID=(\\d+)", RegexOption.IGNORE_CASE).find(href)
-                            val id = if (nmidMatch != null) {
-                                "NMID_${nmidMatch.groupValues[1]}"
-                            } else {
-                                "HASH_${titleText.hashCode()}"
-                            }
-
-                            val isImportant = checkIsImportant(titleText, catName)
-
-                            notices.add(
-                                Notice(
-                                    id = id,
-                                    title = titleText,
-                                    date = dateText,
-                                    category = catName,
-                                    noticeUrl = noticeUrl,
-                                    pdfUrl = "", // resolved on-demand or during download
-                                    isNew = isNoticeNew(id),
-                                    isImportant = isImportant
-                                )
-                            )
-                        }
-                    }
-                } catch (e: Exception) {
-                    e.printStackTrace()
+            val finalNotices = if (scrapedNotices.isNotEmpty()) {
+                val unique = scrapedNotices.distinctBy { it.id }
+                val sorted = unique.sortedWith(
+                    compareByDescending<Notice> { parseNoticeDate(it.date) }
+                        .thenByDescending { extractNmidNumber(it.id) }
+                )
+                saveNoticesToCache(sorted)
+                sorted
+            } else {
+                // Offline fallback
+                val cached = loadCachedNotices()
+                if (cached.isEmpty()) {
+                    fallbackScrapeCollegeSite()
+                } else {
+                    cached
                 }
             }
 
-            // Fallback scraping if ERP direct connection is blocked
-            if (notices.isEmpty()) {
-                try {
-                    val doc = Jsoup.connect(allNoticesUrl)
-                        .userAgent("Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
-                        .timeout(15000)
-                        .followRedirects(true)
-                        .get()
-
-                    val links = doc.select("a[href]")
-                    for (link in links) {
-                        val href = link.attr("abs:href").ifBlank { link.attr("href") }
-                        val unescapedText = org.jsoup.parser.Parser.unescapeEntities(link.text().trim(), false)
-                        val text = unescapedText.replace(Regex("\\s+"), " ").trim()
-                        if (text.length > 8 && (href.contains("pdf", ignoreCase = true) || href.contains("notice", ignoreCase = true))) {
-                            val nmidMatch = Regex("NMID=(\\d+)", RegexOption.IGNORE_CASE).find(href)
-                            val id = if (nmidMatch != null) {
-                                "NMID_${nmidMatch.groupValues[1]}"
-                            } else {
-                                "HASH_${text.hashCode()}"
-                            }
-                            notices.add(
-                                Notice(
-                                    id = id,
-                                    title = text,
-                                    date = "",
-                                    category = "General",
-                                    noticeUrl = href,
-                                    pdfUrl = if (href.endsWith(".pdf", ignoreCase = true)) href else "",
-                                    isNew = isNoticeNew(id),
-                                    isImportant = false
-                                )
-                            )
-                        }
-                    }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-            }
-
-            notices.distinctBy { it.title }
+            finalNotices
         }
+
+    private fun fetchEndpoint(catName: String, ntid: Int, isArchive: Boolean): List<Notice> {
+        val list = mutableListOf<Notice>()
+        try {
+            val portalUrl = if (isArchive) {
+                "$erpBaseUrl/NoticePortal/NoticeWebsite_bose.aspx?ntid=$ntid&A=A"
+            } else {
+                "$erpBaseUrl/NoticePortal/NoticeWebsite_bose.aspx?ntid=$ntid"
+            }
+            val doc: Document = Jsoup.connect(portalUrl)
+                .userAgent("Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
+                .timeout(12000)
+                .followRedirects(true)
+                .get()
+
+            val rows = doc.select("table tr")
+            for (row in rows) {
+                val cells = row.select("td")
+                if (cells.size >= 2) {
+                    val dateText = cells[0].text().trim()
+                    val unescapedTitle = org.jsoup.parser.Parser.unescapeEntities(cells[1].text().trim(), false)
+                    val titleText = unescapedTitle.replace(Regex("\\s+"), " ").trim()
+                    if (titleText.isBlank() || titleText.equals("Subject", ignoreCase = true)) continue
+
+                    val link = row.select("a[href]").firstOrNull()
+                    val href = link?.attr("abs:href")?.ifBlank { link.attr("href") } ?: ""
+                    val noticeUrl = if (href.startsWith("http")) href else "$erpBaseUrl/$href"
+
+                    val nmidMatch = Regex("NMID=(\\d+)", RegexOption.IGNORE_CASE).find(href)
+                    val id = if (nmidMatch != null) {
+                        "NMID_${nmidMatch.groupValues[1]}"
+                    } else {
+                        val digest = hashString("${dateText}_${titleText}")
+                        "HASH_$digest"
+                    }
+
+                    val isImportant = checkIsImportant(titleText, catName)
+                    val isDownloaded = getDownloadedFileById(id, context) != null
+
+                    list.add(
+                        Notice(
+                            id = id,
+                            title = titleText,
+                            date = dateText,
+                            category = catName,
+                            noticeUrl = noticeUrl,
+                            pdfUrl = "",
+                            isNew = isNoticeNew(id),
+                            isDownloaded = isDownloaded,
+                            isImportant = isImportant
+                        )
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            // Keep going across other endpoints
+        }
+        return list
+    }
+
+    private fun fallbackScrapeCollegeSite(): List<Notice> {
+        val notices = mutableListOf<Notice>()
+        try {
+            val doc = Jsoup.connect(allNoticesUrl)
+                .userAgent("Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
+                .timeout(12000)
+                .followRedirects(true)
+                .get()
+
+            val links = doc.select("a[href]")
+            for (link in links) {
+                val href = link.attr("abs:href").ifBlank { link.attr("href") }
+                val unescapedText = org.jsoup.parser.Parser.unescapeEntities(link.text().trim(), false)
+                val text = unescapedText.replace(Regex("\\s+"), " ").trim()
+                if (text.length > 8 && (href.contains("pdf", ignoreCase = true) || href.contains("notice", ignoreCase = true))) {
+                    val nmidMatch = Regex("NMID=(\\d+)", RegexOption.IGNORE_CASE).find(href)
+                    val id = if (nmidMatch != null) {
+                        "NMID_${nmidMatch.groupValues[1]}"
+                    } else {
+                        val digest = hashString(text)
+                        "HASH_$digest"
+                    }
+                    notices.add(
+                        Notice(
+                            id = id,
+                            title = text,
+                            date = "",
+                            category = "All Notices",
+                            noticeUrl = href,
+                            pdfUrl = if (href.endsWith(".pdf", ignoreCase = true)) href else "",
+                            isNew = isNoticeNew(id),
+                            isDownloaded = getDownloadedFileById(id, context) != null,
+                            isImportant = false
+                        )
+                    )
+                }
+            }
+        } catch (_: Exception) {}
+        return notices.distinctBy { it.id }
+    }
 
     override suspend fun resolvePdfUrl(notice: Notice): String = withContext(Dispatchers.IO) {
         if (notice.pdfUrl.isNotBlank() && notice.pdfUrl.endsWith(".pdf", ignoreCase = true)) {
@@ -161,21 +207,18 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
         if (targetUrl.isBlank()) return@withContext ""
 
         try {
-            // If targetUrl is show-notice.php or NoticeWebsite or NoticeDtls
             val doc: Document = Jsoup.connect(targetUrl)
                 .userAgent("Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
                 .timeout(12000)
                 .followRedirects(true)
                 .get()
 
-            // Look for direct PDF download button/link
             val pdfLink = doc.select("a[href*=.pdf], a#pdf-download-btn").firstOrNull()
             if (pdfLink != null) {
                 val href = pdfLink.attr("abs:href").ifBlank { pdfLink.attr("href") }
                 if (href.isNotBlank()) return@withContext href
             }
 
-            // Look for iframe inside show-notice.php (e.g. NoticeDtls.aspx?NMID=...)
             val innerIframe = doc.select("iframe[src*=NoticeDtls]").firstOrNull()
             if (innerIframe != null) {
                 val iframeSrc = innerIframe.attr("abs:src").ifBlank { innerIframe.attr("src") }
@@ -192,7 +235,6 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
                         if (pdfHref.isNotBlank()) return@withContext pdfHref
                     }
 
-                    // Check script text for PDF path
                     val scripts = iframeDoc.select("script").html()
                     val pdfRegex = Regex("https?://[^'\"\\s]+\\.pdf", RegexOption.IGNORE_CASE)
                     val match = pdfRegex.find(scripts)
@@ -202,7 +244,6 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
                 }
             }
 
-            // Check if any script mentions a PDF file
             val scripts = doc.select("script").html()
             val pdfRegex = Regex("https?://[^'\"\\s]+\\.pdf", RegexOption.IGNORE_CASE)
             val match = pdfRegex.find(scripts)
@@ -212,7 +253,6 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
 
             targetUrl
         } catch (e: Exception) {
-            e.printStackTrace()
             targetUrl
         }
     }
@@ -222,11 +262,8 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
             val dir = File(context.cacheDir, "notices")
             if (!dir.exists()) dir.mkdirs()
 
-            val fileName = "${notice.id.hashCode()}.pdf"
-            val file = File(dir, fileName)
-
-            // Validate existing file is not corrupted (must be > 200 bytes and start with %PDF)
-            if (isValidPdf(file)) return@withContext file
+            val targetFile = File(dir, "${notice.id}.pdf")
+            if (isValidPdf(targetFile)) return@withContext targetFile
 
             try {
                 val resolvedUrl = resolvePdfUrl(notice)
@@ -234,29 +271,25 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
                     return@withContext null
                 }
 
-                // Periodically prune stale notice cache (files > 30 days or cache > 50MB)
                 pruneNoticeCache(dir)
 
-                val url = URL(resolvedUrl)
-                val connection = (url.openConnection() as? java.net.HttpURLConnection) ?: url.openConnection()
-                if (connection is java.net.HttpURLConnection) {
-                    connection.instanceFollowRedirects = true
-                    connection.requestMethod = "GET"
+                val tempFile = File(dir, "${notice.id}_${System.currentTimeMillis()}_temp.tmp")
+                val request = Request.Builder()
+                    .url(resolvedUrl)
+                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
+                    .build()
+
+                val response = httpClient.newCall(request).execute()
+                if (!response.isSuccessful) {
+                    response.close()
+                    return@withContext null
                 }
 
-                connection.setRequestProperty(
-                    "User-Agent",
-                    "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36"
-                )
-                connection.connectTimeout = 15000
-                connection.readTimeout = 15000
-                connection.connect()
-
-                val tempFile = File(dir, "${notice.id.hashCode()}_temp.tmp")
+                val body = response.body ?: return@withContext null
                 val maxAllowedBytes = 25 * 1024 * 1024L // 25 MB safety cap
                 var bytesReadTotal = 0L
 
-                connection.getInputStream().use { input ->
+                body.byteStream().use { input ->
                     FileOutputStream(tempFile).use { output ->
                         val buffer = ByteArray(8192)
                         var bytes = input.read(buffer)
@@ -273,9 +306,9 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
                 }
 
                 if (isValidPdf(tempFile)) {
-                    if (file.exists()) file.delete()
-                    tempFile.renameTo(file)
-                    file
+                    if (targetFile.exists()) targetFile.delete()
+                    tempFile.renameTo(targetFile)
+                    targetFile
                 } else {
                     tempFile.delete()
                     null
@@ -304,6 +337,7 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
             val files = dir.listFiles() ?: return
             val now = System.currentTimeMillis()
             val thirtyDaysMs = 30L * 24 * 60 * 60 * 1000
+            val fifteenMinutesMs = 15L * 60 * 1000
             val maxCacheBytes = 50 * 1024 * 1024L // 50MB max cache size
 
             var totalSize = 0L
@@ -311,7 +345,10 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
 
             for (file in fileList) {
                 if (file.name.endsWith(".tmp")) {
-                    file.delete()
+                    // Do not delete in-progress downloads
+                    if (now - file.lastModified() > fifteenMinutesMs) {
+                        file.delete()
+                    }
                 } else if (now - file.lastModified() > thirtyDaysMs) {
                     file.delete()
                 } else {
@@ -321,7 +358,7 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
 
             if (totalSize > maxCacheBytes) {
                 for (file in fileList) {
-                    if (file.exists()) {
+                    if (file.exists() && !file.name.endsWith(".tmp")) {
                         totalSize -= file.length()
                         file.delete()
                         if (totalSize <= maxCacheBytes) break
@@ -347,10 +384,23 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
         }
     }
 
-    override fun getDownloadedFile(notice: Notice, context: Context): File? {
+    private fun getFileForNotice(noticeId: String, context: Context): File {
         val dir = File(context.cacheDir, "notices")
-        val fileName = "${notice.id.hashCode()}.pdf"
-        val file = File(dir, fileName)
+        if (!dir.exists()) dir.mkdirs()
+        val modernFile = File(dir, "${noticeId}.pdf")
+        if (isValidPdf(modernFile)) return modernFile
+        val legacyFile = File(dir, "${noticeId.hashCode()}.pdf")
+        if (isValidPdf(legacyFile)) return legacyFile
+        return modernFile
+    }
+
+    override fun getDownloadedFile(notice: Notice, context: Context): File? {
+        val file = getFileForNotice(notice.id, context)
+        return if (isValidPdf(file)) file else null
+    }
+
+    private fun getDownloadedFileById(noticeId: String, context: Context): File? {
+        val file = getFileForNotice(noticeId, context)
         return if (isValidPdf(file)) file else null
     }
 
@@ -360,13 +410,104 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
     }
 
     override fun markNoticeAsSeen(noticeId: String) {
+        markNoticesAsSeen(listOf(noticeId))
+    }
+
+    override fun markNoticesAsSeen(noticeIds: Collection<String>) {
+        if (noticeIds.isEmpty()) return
         val seenIds = getSeenNoticeIds().toMutableSet()
-        seenIds.add(noticeId)
-        prefs.edit().putStringSet("seen_notice_ids", seenIds).apply()
+        val changed = seenIds.addAll(noticeIds)
+        if (changed) {
+            prefs.edit().putStringSet("seen_notice_ids", seenIds).apply()
+        }
     }
 
     override fun getSeenNoticeIds(): Set<String> {
         return prefs.getStringSet("seen_notice_ids", emptySet()) ?: emptySet()
+    }
+
+    override fun loadCachedNotices(): List<Notice> {
+        return try {
+            val cacheFile = File(context.cacheDir, "cached_notices.json")
+            if (!cacheFile.exists()) return emptyList()
+            val array = JSONArray(cacheFile.readText())
+            val list = mutableListOf<Notice>()
+            val seenIds = getSeenNoticeIds()
+            for (i in 0 until array.length()) {
+                val obj = array.getJSONObject(i)
+                val id = obj.getString("id")
+                list.add(
+                    Notice(
+                        id = id,
+                        title = obj.getString("title"),
+                        date = obj.optString("date", ""),
+                        category = obj.optString("category", "All Notices"),
+                        noticeUrl = obj.optString("noticeUrl", ""),
+                        pdfUrl = obj.optString("pdfUrl", ""),
+                        isNew = !seenIds.contains(id),
+                        isDownloaded = getDownloadedFileById(id, context) != null,
+                        isImportant = obj.optBoolean("isImportant", false)
+                    )
+                )
+            }
+            list
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun saveNoticesToCache(notices: List<Notice>) {
+        try {
+            val cacheFile = File(context.cacheDir, "cached_notices.json")
+            val array = JSONArray()
+            for (n in notices) {
+                val obj = JSONObject().apply {
+                    put("id", n.id)
+                    put("title", n.title)
+                    put("date", n.date)
+                    put("category", n.category)
+                    put("noticeUrl", n.noticeUrl)
+                    put("pdfUrl", n.pdfUrl)
+                    put("isImportant", n.isImportant)
+                }
+                array.put(obj)
+            }
+            cacheFile.writeText(array.toString())
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun parseNoticeDate(dateStr: String): Long {
+        if (dateStr.isBlank()) return 0L
+        val formats = listOf(
+            "ddMMMyyyy",
+            "dd MMM yyyy",
+            "dd-MMM-yyyy",
+            "yyyy-MM-dd",
+            "dd/MM/yyyy"
+        )
+        val clean = dateStr.trim().replace(Regex("\\s+"), " ")
+        for (pattern in formats) {
+            try {
+                val sdf = SimpleDateFormat(pattern, Locale.ENGLISH)
+                sdf.isLenient = true
+                val parsed = sdf.parse(clean)
+                if (parsed != null) return parsed.time
+            } catch (_: Exception) {}
+        }
+        return 0L
+    }
+
+    private fun extractNmidNumber(id: String): Int {
+        val match = Regex("NMID_(\\d+)", RegexOption.IGNORE_CASE).find(id)
+        return match?.groupValues?.get(1)?.toIntOrNull() ?: 0
+    }
+
+    private fun hashString(input: String): String {
+        val md = MessageDigest.getInstance("SHA-256")
+        val bytes = md.digest(input.toByteArray(Charsets.UTF_8))
+        return bytes.take(8).joinToString("") { "%02x".format(it) }
     }
 
     private fun checkIsImportant(title: String, category: String): Boolean {

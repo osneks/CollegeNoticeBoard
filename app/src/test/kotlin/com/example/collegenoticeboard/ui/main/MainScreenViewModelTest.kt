@@ -31,8 +31,24 @@ class NoticeModelTest {
     @Test
     fun testNoticeCategoryDefinitions() {
         assertEquals("All Notices", NoticeCategory.ALL.displayName)
+        assertEquals("Important", NoticeCategory.IMPORTANT.displayName)
         assertEquals(3, NoticeCategory.EXAM.ntid)
         assertEquals(2, NoticeCategory.ADMISSION.ntid)
         assertEquals(4, NoticeCategory.TENDER.ntid)
+    }
+
+    @Test
+    fun testDistinctByIdPreservesMultipleAllotmentLists() {
+        // Reproduce real college scenario where 2 distinct allotment lists share the title
+        val notices = listOf(
+            Notice("NMID_78", "3-Year B.Sc (Gen) PHYSICS Practical Exam", "31Dec2026", "Exam", "", ""),
+            Notice("NMID_80", "3-Year B.Sc (Gen) PHYSICS Practical Exam", "31Dec2026", "Exam", "", "")
+        )
+
+        val uniqueById = notices.distinctBy { it.id }
+        assertEquals("Both distinct circulars must be preserved by ID", 2, uniqueById.size)
+
+        val uniqueByTitle = notices.distinctBy { it.title }
+        assertEquals("Title-based deduplication would erroneously drop one circular", 1, uniqueByTitle.size)
     }
 }

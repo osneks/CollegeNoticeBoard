@@ -137,17 +137,13 @@ fun MainScreen(
     val context = LocalContext.current
     var menuExpanded by remember { mutableStateOf(false) }
 
-    // Auto-focus or highlight notification deep-linked circular if opened from notification
-    LaunchedEffect(Unit) {
-        val pendingUrl = com.example.collegenoticeboard.MainActivity.pendingNoticeUrl
-        if (!pendingUrl.isNullOrBlank()) {
-            com.example.collegenoticeboard.MainActivity.pendingNoticeUrl = null
-            // Check if matches any notice
-            val match = uiState.notices.find { it.noticeUrl == pendingUrl || it.pdfUrl == pendingUrl }
-            if (match != null) {
-                viewModel.openPdf(match) { file ->
-                    openPdfInDriveOrDocs(context, file)
-                }
+    // Auto-focus or open notification deep-linked circular reactively
+    val pendingNoticeUrl by com.example.collegenoticeboard.MainActivity.pendingNoticeUrl.collectAsStateWithLifecycle()
+    LaunchedEffect(pendingNoticeUrl) {
+        pendingNoticeUrl?.let { url ->
+            com.example.collegenoticeboard.MainActivity.pendingNoticeUrl.value = null
+            viewModel.handlePendingNotice(url) { file ->
+                openPdfInDriveOrDocs(context, file)
             }
         }
     }
@@ -305,7 +301,22 @@ fun MainScreen(
                             }
                         )
 
-                        // 2. Admission Notices
+                        // 2. Urgent / Important Notices
+                        DropdownMenuItem(
+                            text = { Text("Urgent & Important", fontWeight = if (uiState.selectedCategory == NoticeCategory.IMPORTANT) FontWeight.Bold else FontWeight.Normal) },
+                            leadingIcon = {
+                                Icon(Icons.Filled.PriorityHigh, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                            },
+                            trailingIcon = if (uiState.selectedCategory == NoticeCategory.IMPORTANT) {
+                                { Icon(Icons.Filled.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary) }
+                            } else null,
+                            onClick = {
+                                viewModel.selectCategory(NoticeCategory.IMPORTANT)
+                                menuExpanded = false
+                            }
+                        )
+
+                        // 3. Admission Notices
                         DropdownMenuItem(
                             text = { Text("Admission", fontWeight = if (uiState.selectedCategory == NoticeCategory.ADMISSION) FontWeight.Bold else FontWeight.Normal) },
                             leadingIcon = {
@@ -458,9 +469,11 @@ fun MainScreen(
                             displayNotices,
                             key = { _, notice -> notice.id }
                         ) { _, notice ->
+                            val isDownloaded = uiState.downloadedFiles.containsKey(notice.id)
                             NoticeCard(
                                 notice = notice,
-                                isLoading = uiState.loadingNoticeId == notice.id,
+                                isLoading = uiState.loadingNoticeIds.contains(notice.id),
+                                isDownloaded = isDownloaded,
                                 onView = {
                                     viewModel.openPdf(notice) { file ->
                                         openPdfInDriveOrDocs(context, file)
@@ -468,8 +481,10 @@ fun MainScreen(
                                 },
                                 onOpenUrl = {
                                     val urlToOpen = notice.noticeUrl.ifBlank { notice.pdfUrl }
-                                    if (urlToOpen.isNotBlank()) {
-                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(urlToOpen))
+                                    if (urlToOpen.isNotBlank() && isValidCollegeUrl(urlToOpen)) {
+                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(urlToOpen)).apply {
+                                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        }
                                         try {
                                             context.startActivity(intent)
                                         } catch (e: Exception) {
@@ -497,11 +512,26 @@ fun openPdfInDriveOrDocs(context: Context, file: File) {
     val intent = Intent(Intent.ACTION_VIEW).apply {
         setDataAndType(uri, "application/pdf")
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
     try {
         context.startActivity(intent)
     } catch (e: Exception) {
         Toast.makeText(context, "No PDF viewer found on device", Toast.LENGTH_SHORT).show()
+    }
+}
+
+private fun isValidCollegeUrl(url: String): Boolean {
+    if (url.isBlank()) return false
+    return try {
+        val uri = Uri.parse(url)
+        val scheme = uri.scheme?.lowercase() ?: return false
+        val host = uri.host?.lowercase() ?: return false
+        (scheme == "https" || scheme == "http") &&
+            (host == "ajcbosecollege.ac.in" || host.endsWith(".ajcbosecollege.ac.in") ||
+             host == "ajcbosecollegeerp.in" || host.endsWith(".ajcbosecollegeerp.in"))
+    } catch (e: Exception) {
+        false
     }
 }
 
@@ -566,6 +596,7 @@ fun StatItem(
 fun NoticeCard(
     notice: Notice,
     isLoading: Boolean,
+    isDownloaded: Boolean,
     onView: () -> Unit,
     onOpenUrl: () -> Unit
 ) {
@@ -586,7 +617,7 @@ fun NoticeCard(
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            // Header: Category badge + New badge + Date
+            // Header: Category badge + New badge + Saved badge + Date
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -608,6 +639,33 @@ fun NoticeCard(
                             color = MaterialTheme.colorScheme.onTertiaryContainer,
                             fontWeight = FontWeight.SemiBold
                         )
+                    }
+
+                    if (isDownloaded) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Filled.Check,
+                                    contentDescription = "Saved offline",
+                                    modifier = Modifier.size(12.dp),
+                                    tint = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                                Spacer(Modifier.width(2.dp))
+                                Text(
+                                    "SAVED",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
                     }
 
                     if (notice.isNew) {
@@ -667,7 +725,7 @@ fun NoticeCard(
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "Opening in Google Drive / Docs...",
+                    "Opening document...",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary
                 )
@@ -716,12 +774,15 @@ fun NoticeCard(
                         Text("Loading...", style = MaterialTheme.typography.labelMedium)
                     } else {
                         Icon(
-                            Icons.Filled.Visibility,
+                            if (isDownloaded) Icons.Filled.Check else Icons.Filled.Visibility,
                             contentDescription = null,
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(Modifier.width(4.dp))
-                        Text("View Notice", style = MaterialTheme.typography.labelMedium)
+                        Text(
+                            if (isDownloaded) "Open Notice" else "View Notice",
+                            style = MaterialTheme.typography.labelMedium
+                        )
                     }
                 }
             }

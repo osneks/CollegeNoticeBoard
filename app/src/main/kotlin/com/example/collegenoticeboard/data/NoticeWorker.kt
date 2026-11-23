@@ -93,14 +93,14 @@ class NoticeCheckWorker(
 
             if (seenIds.isEmpty()) {
                 // Initial run: seed existing notices without triggering alert spam
-                notices.forEach { repository.markNoticeAsSeen(it.id) }
+                repository.markNoticesAsSeen(notices.map { it.id })
             } else {
                 val newNotices = notices.filter { !seenIds.contains(it.id) }
 
                 if (newNotices.isNotEmpty()) {
                     createNotificationChannel(applicationContext)
                     showNotification(newNotices)
-                    newNotices.forEach { repository.markNoticeAsSeen(it.id) }
+                    repository.markNoticesAsSeen(newNotices.map { it.id })
                 }
             }
 
@@ -113,13 +113,15 @@ class NoticeCheckWorker(
     private fun showNotification(newNotices: List<Notice>) {
         val latestNotice = newNotices.first()
         val intent = Intent(applicationContext, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
             if (newNotices.size == 1 && latestNotice.noticeUrl.isNotBlank()) {
                 putExtra("NOTICE_URL", latestNotice.noticeUrl)
             }
         }
         val pendingIntent = PendingIntent.getActivity(
-            applicationContext, 0, intent,
+            applicationContext,
+            (System.currentTimeMillis() % 10000).toInt(),
+            intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
