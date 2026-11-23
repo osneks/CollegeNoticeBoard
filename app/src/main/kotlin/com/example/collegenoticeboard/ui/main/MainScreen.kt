@@ -4,18 +4,16 @@ package com.example.collegenoticeboard.ui.main
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.net.Uri
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,26 +27,19 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
-import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.FiberNew
 import androidx.compose.material.icons.filled.FilterList
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.PriorityHigh
 import androidx.compose.material.icons.filled.Refresh
@@ -56,20 +47,14 @@ import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.ZoomIn
-import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material3.Badge
-import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -79,46 +64,33 @@ import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SearchBar
-import androidx.compose.material3.SearchBarDefaults
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
-import androidx.compose.material3.TabRowDefaults
-import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -136,15 +108,14 @@ fun MainScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
     var menuExpanded by remember { mutableStateOf(false) }
+    var viewingNotice by remember { mutableStateOf<Notice?>(null) }
 
-    // Auto-focus or open notification deep-linked circular reactively
+    // Auto-focus or open notification deep-linked circular reactively without forced download
     val pendingNoticeUrl by com.example.collegenoticeboard.MainActivity.pendingNoticeUrl.collectAsStateWithLifecycle()
     LaunchedEffect(pendingNoticeUrl) {
         pendingNoticeUrl?.let { url ->
             com.example.collegenoticeboard.MainActivity.pendingNoticeUrl.value = null
-            viewModel.handlePendingNotice(url) { file ->
-                openPdfInDriveOrDocs(context, file)
-            }
+            viewingNotice = viewModel.findNoticeForUrl(url)
         }
     }
 
@@ -203,7 +174,7 @@ fun MainScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            // Modern Search Bar with Dropdown Filter Menu integrated on the right
+            // Modern Search Bar with Dropdown Filter Menu
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -286,7 +257,7 @@ fun MainScreen(
                         expanded = menuExpanded,
                         onDismissRequest = { menuExpanded = false }
                     ) {
-                        // 1. All Notices (Unified with General)
+                        // 1. All Notices
                         DropdownMenuItem(
                             text = { Text("All Notices", fontWeight = if (uiState.selectedCategory == NoticeCategory.ALL) FontWeight.Bold else FontWeight.Normal) },
                             leadingIcon = {
@@ -331,7 +302,7 @@ fun MainScreen(
                             }
                         )
 
-                        // 3. Examination Notices
+                        // 4. Examination Notices
                         DropdownMenuItem(
                             text = { Text("Exam", fontWeight = if (uiState.selectedCategory == NoticeCategory.EXAM) FontWeight.Bold else FontWeight.Normal) },
                             leadingIcon = {
@@ -346,7 +317,7 @@ fun MainScreen(
                             }
                         )
 
-                        // 4. Tender Notices
+                        // 5. Tender Notices
                         DropdownMenuItem(
                             text = { Text("Tender", fontWeight = if (uiState.selectedCategory == NoticeCategory.TENDER) FontWeight.Bold else FontWeight.Normal) },
                             leadingIcon = {
@@ -364,7 +335,7 @@ fun MainScreen(
                 }
             }
 
-            // Active Filter Chip Badge (When a specific filter like Exam/Admission/Tender is selected)
+            // Active Filter Chip Badge
             if (uiState.selectedCategory != NoticeCategory.ALL) {
                 Row(
                     modifier = Modifier
@@ -461,7 +432,8 @@ fun MainScreen(
                         item {
                             StatsCard(
                                 totalNotices = displayNotices.size,
-                                newNotices = uiState.notices.count { it.isNew }
+                                newNotices = uiState.notices.count { it.isNew },
+                                savedNotices = uiState.downloadedFiles.size
                             )
                         }
 
@@ -474,10 +446,19 @@ fun MainScreen(
                                 notice = notice,
                                 isLoading = uiState.loadingNoticeIds.contains(notice.id),
                                 isDownloaded = isDownloaded,
-                                onView = {
-                                    viewModel.openPdf(notice) { file ->
+                                onViewOnline = {
+                                    viewingNotice = notice
+                                },
+                                onDownload = {
+                                    viewModel.downloadPdfOnly(notice)
+                                },
+                                onOpenDownloaded = {
+                                    uiState.downloadedFiles[notice.id]?.let { file ->
                                         openPdfInDriveOrDocs(context, file)
                                     }
+                                },
+                                onDeleteDownloaded = {
+                                    viewModel.deleteDownloadedPdf(notice)
                                 },
                                 onOpenUrl = {
                                     val urlToOpen = notice.noticeUrl.ifBlank { notice.pdfUrl }
@@ -487,7 +468,7 @@ fun MainScreen(
                                         }
                                         try {
                                             context.startActivity(intent)
-                                        } catch (e: Exception) {
+                                        } catch (_: Exception) {
                                             Toast.makeText(context, "Cannot open URL", Toast.LENGTH_SHORT).show()
                                         }
                                     }
@@ -498,6 +479,187 @@ fun MainScreen(
                         item { Spacer(Modifier.height(80.dp)) }
                     }
                 }
+            }
+        }
+    }
+
+    // In-App Notice Viewer Dialog (Views online without forcing a PDF download)
+    if (viewingNotice != null) {
+        val notice = viewingNotice!!
+        val isDownloaded = uiState.downloadedFiles.containsKey(notice.id)
+        NoticeViewDialog(
+            notice = notice,
+            isDownloaded = isDownloaded,
+            isDownloading = uiState.loadingNoticeIds.contains(notice.id),
+            onDownload = {
+                viewModel.downloadPdfOnly(notice)
+            },
+            onOpenDownloaded = {
+                uiState.downloadedFiles[notice.id]?.let { file ->
+                    openPdfInDriveOrDocs(context, file)
+                }
+            },
+            onOpenBrowser = {
+                val targetUrl = notice.noticeUrl.ifBlank { notice.pdfUrl }
+                if (targetUrl.isNotBlank() && isValidCollegeUrl(targetUrl)) {
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl)).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    try {
+                        context.startActivity(intent)
+                    } catch (_: Exception) {
+                        Toast.makeText(context, "Cannot open browser", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            },
+            onDismiss = { viewingNotice = null }
+        )
+    }
+}
+
+/**
+ * Clean full-screen Dialog to read notice details and documents online
+ * without downloading any file to storage.
+ */
+@Composable
+fun NoticeViewDialog(
+    notice: Notice,
+    isDownloaded: Boolean,
+    isDownloading: Boolean,
+    onDownload: () -> Unit,
+    onOpenDownloaded: () -> Unit,
+    onOpenBrowser: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        BackHandler(onBack = onDismiss)
+
+        var webProgress by remember { mutableStateOf(true) }
+        val targetUrl = remember(notice) {
+            val nmidMatch = Regex("NMID=(\\d+)", RegexOption.IGNORE_CASE).find(notice.noticeUrl)
+            if (nmidMatch != null) {
+                "https://ajcbosecollegeerp.in/NoticePortal/NoticeDtls.aspx?NMID=${nmidMatch.groupValues[1]}"
+            } else {
+                notice.noticeUrl.ifBlank { notice.pdfUrl }
+            }
+        }
+
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                // Top App Bar
+                TopAppBar(
+                    title = {
+                        Column {
+                            Text(
+                                notice.title,
+                                style = MaterialTheme.typography.titleMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                "${notice.category}${if (notice.date.isNotBlank()) " • ${notice.date}" else ""}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = onDismiss) {
+                            Icon(Icons.Filled.Close, contentDescription = "Close")
+                        }
+                    },
+                    actions = {
+                        if (isDownloaded) {
+                            FilledTonalButton(
+                                onClick = onOpenDownloaded,
+                                modifier = Modifier.height(36.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp)
+                            ) {
+                                Icon(
+                                    Icons.Filled.PictureAsPdf,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text("Open PDF", style = MaterialTheme.typography.labelSmall)
+                            }
+                        } else {
+                            FilledTonalButton(
+                                onClick = onDownload,
+                                enabled = !isDownloading,
+                                modifier = Modifier.height(36.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp)
+                            ) {
+                                if (isDownloading) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(14.dp),
+                                        strokeWidth = 2.dp
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Saving...", style = MaterialTheme.typography.labelSmall)
+                                } else {
+                                    Icon(
+                                        Icons.Filled.Download,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Download", style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                        }
+
+                        IconButton(onClick = onOpenBrowser) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.OpenInNew,
+                                contentDescription = "Open in browser"
+                            )
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainer
+                    )
+                )
+
+                if (webProgress) {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth(),
+                        strokeCap = StrokeCap.Round
+                    )
+                }
+
+                // In-App Web View to read without downloading
+                AndroidView(
+                    modifier = Modifier.fillMaxSize(),
+                    factory = { ctx ->
+                        WebView(ctx).apply {
+                            settings.javaScriptEnabled = true
+                            settings.domStorageEnabled = true
+                            settings.loadWithOverviewMode = true
+                            settings.useWideViewPort = true
+                            settings.builtInZoomControls = true
+                            settings.displayZoomControls = false
+                            settings.allowFileAccess = false
+                            settings.allowContentAccess = false
+
+                            webViewClient = object : WebViewClient() {
+                                override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                                    webProgress = true
+                                }
+                                override fun onPageFinished(view: WebView?, url: String?) {
+                                    webProgress = false
+                                }
+                            }
+                            loadUrl(targetUrl)
+                        }
+                    }
+                )
             }
         }
     }
@@ -516,7 +678,7 @@ fun openPdfInDriveOrDocs(context: Context, file: File) {
     }
     try {
         context.startActivity(intent)
-    } catch (e: Exception) {
+    } catch (_: Exception) {
         Toast.makeText(context, "No PDF viewer found on device", Toast.LENGTH_SHORT).show()
     }
 }
@@ -530,7 +692,7 @@ private fun isValidCollegeUrl(url: String): Boolean {
         (scheme == "https" || scheme == "http") &&
             (host == "ajcbosecollege.ac.in" || host.endsWith(".ajcbosecollege.ac.in") ||
              host == "ajcbosecollegeerp.in" || host.endsWith(".ajcbosecollegeerp.in"))
-    } catch (e: Exception) {
+    } catch (_: Exception) {
         false
     }
 }
@@ -538,7 +700,8 @@ private fun isValidCollegeUrl(url: String): Boolean {
 @Composable
 fun StatsCard(
     totalNotices: Int,
-    newNotices: Int
+    newNotices: Int,
+    savedNotices: Int
 ) {
     OutlinedCard(
         modifier = Modifier.fillMaxWidth(),
@@ -555,6 +718,7 @@ fun StatsCard(
             horizontalArrangement = Arrangement.SpaceAround
         ) {
             StatItem(value = "$totalNotices", label = "All Notices", icon = Icons.Filled.Description)
+            StatItem(value = "$savedNotices", label = "Saved PDFs", icon = Icons.Filled.PictureAsPdf)
             StatItem(value = "$newNotices", label = "New Updates", icon = Icons.Filled.Star)
         }
     }
@@ -597,11 +761,17 @@ fun NoticeCard(
     notice: Notice,
     isLoading: Boolean,
     isDownloaded: Boolean,
-    onView: () -> Unit,
+    onViewOnline: () -> Unit,
+    onDownload: () -> Unit,
+    onOpenDownloaded: () -> Unit,
+    onDeleteDownloaded: () -> Unit,
     onOpenUrl: () -> Unit
 ) {
     OutlinedCard(
-        onClick = onView,
+        onClick = {
+            // Tapping card opens the online view without forcing a download
+            if (isDownloaded) onOpenDownloaded() else onViewOnline()
+        },
         modifier = Modifier
             .fillMaxWidth()
             .animateContentSize(
@@ -617,7 +787,7 @@ fun NoticeCard(
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            // Header: Category badge + New badge + Saved badge + Date
+            // Header: Category badge + Saved badge + New badge + Date
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -714,7 +884,7 @@ fun NoticeCard(
                 )
             }
 
-            // Loading state when opening notice
+            // Downloading progress indicator
             if (isLoading) {
                 Spacer(Modifier.height(12.dp))
                 LinearProgressIndicator(
@@ -725,7 +895,7 @@ fun NoticeCard(
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "Opening document...",
+                    "Downloading PDF document...",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary
                 )
@@ -733,56 +903,85 @@ fun NoticeCard(
 
             Spacer(Modifier.height(12.dp))
 
-            // Action buttons
+            // Action buttons: Clearly separating Viewing Online from Downloading
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                val targetUrl = notice.noticeUrl.ifBlank { notice.pdfUrl }
-                if (targetUrl.isNotBlank()) {
-                    OutlinedButton(
-                        onClick = onOpenUrl,
-                        modifier = Modifier.height(36.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                // If downloaded, allow deleting to free device storage
+                if (isDownloaded) {
+                    IconButton(
+                        onClick = onDeleteDownloaded,
+                        modifier = Modifier.size(36.dp)
                     ) {
                         Icon(
-                            Icons.AutoMirrored.Filled.OpenInNew,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
+                            Icons.Filled.DeleteOutline,
+                            contentDescription = "Delete downloaded PDF",
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Spacer(Modifier.width(4.dp))
-                        Text("Website", style = MaterialTheme.typography.labelMedium)
                     }
-
-                    Spacer(Modifier.width(8.dp))
+                    Spacer(Modifier.width(4.dp))
                 }
 
-                FilledTonalButton(
-                    onClick = onView,
-                    enabled = !isLoading,
+                // 1. Separate "View Online" button (Reads online without saving/downloading)
+                OutlinedButton(
+                    onClick = onViewOnline,
                     modifier = Modifier.height(36.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp)
+                    contentPadding = PaddingValues(horizontal = 12.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                 ) {
-                    if (isLoading) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            strokeWidth = 2.dp
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text("Loading...", style = MaterialTheme.typography.labelMedium)
-                    } else {
+                    Icon(
+                        Icons.Filled.Visibility,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text("View", style = MaterialTheme.typography.labelMedium)
+                }
+
+                Spacer(Modifier.width(8.dp))
+
+                // 2. Separate "Download" / "Open PDF" button
+                if (isDownloaded) {
+                    FilledTonalButton(
+                        onClick = onOpenDownloaded,
+                        modifier = Modifier.height(36.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp)
+                    ) {
                         Icon(
-                            if (isDownloaded) Icons.Filled.Check else Icons.Filled.Visibility,
+                            Icons.Filled.PictureAsPdf,
                             contentDescription = null,
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.primary
                         )
                         Spacer(Modifier.width(4.dp))
-                        Text(
-                            if (isDownloaded) "Open Notice" else "View Notice",
-                            style = MaterialTheme.typography.labelMedium
-                        )
+                        Text("Open PDF", style = MaterialTheme.typography.labelMedium)
+                    }
+                } else {
+                    FilledTonalButton(
+                        onClick = onDownload,
+                        enabled = !isLoading,
+                        modifier = Modifier.height(36.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp)
+                    ) {
+                        if (isLoading) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text("Saving...", style = MaterialTheme.typography.labelMedium)
+                        } else {
+                            Icon(
+                                Icons.Filled.Download,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text("Download", style = MaterialTheme.typography.labelMedium)
+                        }
                     }
                 }
             }

@@ -179,7 +179,42 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    fun handlePendingNotice(url: String, onFileReady: (File) -> Unit) {
+    fun downloadPdfOnly(notice: Notice, onComplete: ((File) -> Unit)? = null) {
+        val existingFile = _uiState.value.downloadedFiles[notice.id]
+        if (existingFile != null && existingFile.exists()) {
+            onComplete?.invoke(existingFile)
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(loadingNoticeIds = it.loadingNoticeIds + notice.id) }
+            val ctx = getApplication<Application>()
+            val file = repository.downloadPdf(notice, ctx)
+            _uiState.update { state ->
+                val newFiles = if (file != null) state.downloadedFiles + (notice.id to file) else state.downloadedFiles
+                state.copy(
+                    loadingNoticeIds = state.loadingNoticeIds - notice.id,
+                    downloadedFiles = newFiles,
+                    error = if (file == null) "Could not download notice document" else null
+                )
+            }
+            if (file != null) {
+                onComplete?.invoke(file)
+            }
+        }
+    }
+
+    fun deleteDownloadedPdf(notice: Notice) {
+        val existingFile = _uiState.value.downloadedFiles[notice.id]
+        if (existingFile != null && existingFile.exists()) {
+            existingFile.delete()
+        }
+        _uiState.update { state ->
+            state.copy(downloadedFiles = state.downloadedFiles - notice.id)
+        }
+    }
+
+    fun findNoticeForUrl(url: String): Notice {
         val nmidMatch = Regex("NMID=(\\d+)", RegexOption.IGNORE_CASE).find(url)
         val nmid = nmidMatch?.groupValues?.get(1)
 
@@ -187,20 +222,24 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
             (nmid != null && it.id == "NMID_$nmid") || it.noticeUrl == url || it.pdfUrl == url
         }
 
-        if (match != null) {
-            openPdf(match, onFileReady)
+        return match ?: Notice(
+            id = if (nmid != null) "NMID_$nmid" else "HASH_${url.hashCode()}",
+            title = "College Notice",
+            date = "",
+            category = "All Notices",
+            noticeUrl = url,
+            pdfUrl = if (url.endsWith(".pdf", ignoreCase = true)) url else ""
+        )
+    }
+
+    fun handlePendingNotice(url: String, onFileReady: (File) -> Unit) {
+        val notice = findNoticeForUrl(url)
+        val existing = _uiState.value.downloadedFiles[notice.id]
+        if (existing != null && existing.exists()) {
+            onFileReady(existing)
         } else {
-            // Construct synthetic notice if it's a newly pushed notice not yet in local feed
-            val syntheticId = if (nmid != null) "NMID_$nmid" else "HASH_${url.hashCode()}"
-            val syntheticNotice = Notice(
-                id = syntheticId,
-                title = "College Notice",
-                date = "",
-                category = "All Notices",
-                noticeUrl = url,
-                pdfUrl = if (url.endsWith(".pdf", ignoreCase = true)) url else ""
-            )
-            openPdf(syntheticNotice, onFileReady)
+            // Note: Does not force download unless openPdf is explicitly invoked
+            openPdf(notice, onFileReady)
         }
     }
 
