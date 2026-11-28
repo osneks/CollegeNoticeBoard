@@ -6,6 +6,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -21,6 +24,19 @@ import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
+/**
+ * In-process event bus to notify active UI screens immediately when a push
+ * notification or background worker detects new circulars.
+ */
+object NoticeUpdateBus {
+    private val _updates = MutableSharedFlow<Unit>(extraBufferCapacity = 4)
+    val updates: SharedFlow<Unit> = _updates.asSharedFlow()
+
+    fun notifyUpdated() {
+        _updates.tryEmit(Unit)
+    }
+}
+
 interface NoticeRepository {
     suspend fun fetchNotices(category: NoticeCategory = NoticeCategory.ALL): List<Notice>
     suspend fun downloadPdf(notice: Notice, context: Context): File?
@@ -30,10 +46,20 @@ interface NoticeRepository {
     fun markNoticeAsSeen(noticeId: String)
     fun markNoticesAsSeen(noticeIds: Collection<String>)
     fun getSeenNoticeIds(): Set<String>
+    fun markNoticeAsNotified(noticeId: String)
+    fun markNoticesAsNotified(noticeIds: Collection<String>)
+    fun findUnnotifiedNewNotices(notices: List<Notice>): List<Notice>
     fun loadCachedNotices(): List<Notice>
 }
 
 class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
+
+    companion object {
+        private val prefsLock = Any()
+        private const val KEY_SEEN_IDS = "seen_notice_ids"
+        private const val KEY_NOTIFIED_IDS = "notified_notice_ids"
+        private const val KEY_NOTIFICATIONS_INITIALIZED = "notifications_initialized"
+    }
 
     private val prefs: SharedPreferences =
         context.getSharedPreferences("notice_prefs", Context.MODE_PRIVATE)
@@ -85,6 +111,7 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
                         .thenByDescending { parseNoticeDate(it.date) }
                         .thenBy { it.webOrder }
                 )
+                ensureNotificationsSeeded(sorted)
                 saveNoticesToCache(sorted)
                 sorted
             } else {
@@ -418,15 +445,84 @@ class DefaultNoticeRepository(private val context: Context) : NoticeRepository {
 
     override fun markNoticesAsSeen(noticeIds: Collection<String>) {
         if (noticeIds.isEmpty()) return
-        val seenIds = getSeenNoticeIds().toMutableSet()
-        val changed = seenIds.addAll(noticeIds)
-        if (changed) {
-            prefs.edit().putStringSet("seen_notice_ids", seenIds).apply()
+        synchronized(prefsLock) {
+            val seenIds = getSeenNoticeIdsLocked().toMutableSet()
+            if (seenIds.addAll(noticeIds)) {
+                prefs.edit().putStringSet(KEY_SEEN_IDS, seenIds).apply()
+            }
         }
     }
 
     override fun getSeenNoticeIds(): Set<String> {
-        return prefs.getStringSet("seen_notice_ids", emptySet()) ?: emptySet()
+        synchronized(prefsLock) {
+            return getSeenNoticeIdsLocked()
+        }
+    }
+
+    private fun getSeenNoticeIdsLocked(): Set<String> {
+        return prefs.getStringSet(KEY_SEEN_IDS, emptySet())?.toSet() ?: emptySet()
+    }
+
+    override fun markNoticeAsNotified(noticeId: String) {
+        markNoticesAsNotified(listOf(noticeId))
+    }
+
+    override fun markNoticesAsNotified(noticeIds: Collection<String>) {
+        if (noticeIds.isEmpty()) return
+        synchronized(prefsLock) {
+            val notified = getNotifiedNoticeIdsLocked().toMutableSet()
+            val changed = notified.addAll(noticeIds)
+            val editor = prefs.edit()
+            if (changed) {
+                editor.putStringSet(KEY_NOTIFIED_IDS, notified)
+            }
+            if (!prefs.getBoolean(KEY_NOTIFICATIONS_INITIALIZED, false)) {
+                editor.putBoolean(KEY_NOTIFICATIONS_INITIALIZED, true)
+            }
+            editor.commit()
+        }
+    }
+
+    override fun findUnnotifiedNewNotices(notices: List<Notice>): List<Notice> {
+        if (notices.isEmpty()) return emptyList()
+        synchronized(prefsLock) {
+            if (!prefs.getBoolean(KEY_NOTIFICATIONS_INITIALIZED, false)) {
+                return emptyList()
+            }
+            val notifiedIds = getNotifiedNoticeIdsLocked()
+            return notices.filter { !notifiedIds.contains(it.id) }
+        }
+    }
+
+    /**
+     * Seeds notified_notice_ids once before overwriting the notice cache so that:
+     * - Existing installs upgrading with a prior cache/seen set still get notified
+     *   for any brand-new notice not in their prior cache.
+     * - Fresh installs seed with the initial board without spamming historical notices,
+     *   allowing the very next new circular to trigger a pop-up immediately.
+     */
+    private fun ensureNotificationsSeeded(fetchedNotices: List<Notice>) {
+        if (fetchedNotices.isEmpty()) return
+        synchronized(prefsLock) {
+            if (prefs.getBoolean(KEY_NOTIFICATIONS_INITIALIZED, false)) return
+
+            val priorCachedIds = loadCachedNotices().map { it.id }
+            val priorSeenIds = getSeenNoticeIdsLocked()
+            val seedIds = if (priorCachedIds.isNotEmpty() || priorSeenIds.isNotEmpty()) {
+                (priorCachedIds + priorSeenIds).toSet()
+            } else {
+                fetchedNotices.map { it.id }.toSet()
+            }
+
+            prefs.edit()
+                .putStringSet(KEY_NOTIFIED_IDS, seedIds)
+                .putBoolean(KEY_NOTIFICATIONS_INITIALIZED, true)
+                .commit()
+        }
+    }
+
+    private fun getNotifiedNoticeIdsLocked(): Set<String> {
+        return prefs.getStringSet(KEY_NOTIFIED_IDS, emptySet())?.toSet() ?: emptySet()
     }
 
     override fun loadCachedNotices(): List<Notice> {

@@ -74,6 +74,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -93,8 +94,12 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.collegenoticeboard.data.CloudPushManager
 import com.example.collegenoticeboard.data.Notice
 import com.example.collegenoticeboard.data.NoticeCategory
 import java.io.File
@@ -110,6 +115,28 @@ fun MainScreen(
     val context = LocalContext.current
     var menuExpanded by remember { mutableStateOf(false) }
     var webViewNotice by remember { mutableStateOf<Notice?>(null) }
+
+    // Keep foreground sync and SSE push alive whenever the screen is active/resumed
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> {
+                    CloudPushManager.startListening(context.applicationContext)
+                    viewModel.onForegroundChanged(true)
+                }
+                Lifecycle.Event.ON_PAUSE -> {
+                    viewModel.onForegroundChanged(false)
+                }
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            viewModel.onForegroundChanged(false)
+        }
+    }
 
     // Auto-open deep-linked notification in Google Drive / Docs without downloading to disk
     val pendingNoticeUrl by com.example.collegenoticeboard.MainActivity.pendingNoticeUrl.collectAsStateWithLifecycle()

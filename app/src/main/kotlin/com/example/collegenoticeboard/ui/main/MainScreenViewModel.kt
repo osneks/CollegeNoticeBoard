@@ -10,12 +10,17 @@ import androidx.lifecycle.viewModelScope
 import com.example.collegenoticeboard.data.DefaultNoticeRepository
 import com.example.collegenoticeboard.data.Notice
 import com.example.collegenoticeboard.data.NoticeCategory
+import com.example.collegenoticeboard.data.NoticeCheckWorker
 import com.example.collegenoticeboard.data.NoticeRepository
+import com.example.collegenoticeboard.data.NoticeUpdateBus
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -36,6 +41,9 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
 
     private val repository: NoticeRepository = DefaultNoticeRepository(application)
     private var allNotices: List<Notice> = emptyList()
+    private var lastSyncTimeMs: Long = 0L
+    private var foregroundSyncJob: Job? = null
+    private var inFlightSyncJob: Job? = null
 
     private val _uiState = MutableStateFlow(MainScreenUiState())
     val uiState: StateFlow<MainScreenUiState> = _uiState.asStateFlow()
@@ -45,6 +53,32 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
         loadCachedNotices()
         // Then perform network sync
         loadNotices()
+        // Auto-refresh UI whenever CloudPushManager or NoticeCheckWorker receives new circulars
+        viewModelScope.launch {
+            NoticeUpdateBus.updates.collect {
+                syncNoticesInBackground(notifyIfUnseen = true)
+            }
+        }
+    }
+
+    fun onForegroundChanged(isForeground: Boolean) {
+        if (isForeground) {
+            val now = System.currentTimeMillis()
+            if (now - lastSyncTimeMs >= 30_000L) {
+                syncNoticesInBackground(notifyIfUnseen = true)
+            }
+            if (foregroundSyncJob?.isActive != true) {
+                foregroundSyncJob = viewModelScope.launch {
+                    while (isActive) {
+                        delay(120_000L)
+                        syncNoticesInBackground(notifyIfUnseen = true)
+                    }
+                }
+            }
+        } else {
+            foregroundSyncJob?.cancel()
+            foregroundSyncJob = null
+        }
     }
 
     private fun loadCachedNotices() {
@@ -52,13 +86,7 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
         if (cached.isNotEmpty()) {
             allNotices = cached
             val ctx = getApplication<Application>()
-            val downloaded = mutableMapOf<String, File>()
-            cached.forEach { notice ->
-                val file = repository.getDownloadedFile(notice, ctx)
-                if (file != null) {
-                    downloaded[notice.id] = file
-                }
-            }
+            val downloaded = collectDownloadedFiles(cached, ctx)
             _uiState.update {
                 it.copy(
                     isLoading = false,
@@ -71,30 +99,15 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun loadNotices() {
-        viewModelScope.launch {
+        inFlightSyncJob?.cancel()
+        inFlightSyncJob = viewModelScope.launch {
+            lastSyncTimeMs = System.currentTimeMillis()
             if (_uiState.value.notices.isEmpty()) {
                 _uiState.update { it.copy(isLoading = true, error = null) }
             }
             try {
                 val notices = repository.fetchNotices(NoticeCategory.ALL)
-                allNotices = notices
-                val ctx = getApplication<Application>()
-                val downloadedFiles = mutableMapOf<String, File>()
-                notices.forEach { notice ->
-                    val file = repository.getDownloadedFile(notice, ctx)
-                    if (file != null) {
-                        downloadedFiles[notice.id] = file
-                    }
-                }
-                _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        notices = notices,
-                        filteredNotices = filterNotices(notices, it.searchQuery, it.selectedCategory),
-                        downloadedFiles = downloadedFiles,
-                        error = null
-                    )
-                }
+                applyFetchedNotices(notices, notifyIfUnseen = true, clearLoading = true)
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(
@@ -107,28 +120,13 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun refresh() {
-        viewModelScope.launch {
+        inFlightSyncJob?.cancel()
+        inFlightSyncJob = viewModelScope.launch {
+            lastSyncTimeMs = System.currentTimeMillis()
             _uiState.update { it.copy(isRefreshing = true) }
             try {
                 val notices = repository.fetchNotices(NoticeCategory.ALL)
-                allNotices = notices
-                val ctx = getApplication<Application>()
-                val downloadedFiles = mutableMapOf<String, File>()
-                notices.forEach { notice ->
-                    val file = repository.getDownloadedFile(notice, ctx)
-                    if (file != null) {
-                        downloadedFiles[notice.id] = file
-                    }
-                }
-                _uiState.update {
-                    it.copy(
-                        isRefreshing = false,
-                        notices = notices,
-                        filteredNotices = filterNotices(notices, it.searchQuery, it.selectedCategory),
-                        downloadedFiles = downloadedFiles,
-                        error = null
-                    )
-                }
+                applyFetchedNotices(notices, notifyIfUnseen = false, clearRefreshing = true)
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(
@@ -138,6 +136,62 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
                 }
             }
         }
+    }
+
+    private fun syncNoticesInBackground(notifyIfUnseen: Boolean = true) {
+        if (inFlightSyncJob?.isActive == true) return
+        inFlightSyncJob = viewModelScope.launch {
+            lastSyncTimeMs = System.currentTimeMillis()
+            try {
+                val notices = repository.fetchNotices(NoticeCategory.ALL)
+                applyFetchedNotices(notices, notifyIfUnseen = notifyIfUnseen, clearLoading = true)
+            } catch (_: Exception) {
+                // Silent background sync: keep existing cached UI state on transient errors
+            }
+        }
+    }
+
+    private suspend fun applyFetchedNotices(
+        notices: List<Notice>,
+        notifyIfUnseen: Boolean,
+        clearLoading: Boolean = false,
+        clearRefreshing: Boolean = false
+    ) {
+        val ctx = getApplication<Application>()
+        val (downloadedFiles, newUnnotified) = withContext(Dispatchers.IO) {
+            val unnotified = repository.findUnnotifiedNewNotices(notices)
+            if (unnotified.isNotEmpty()) {
+                if (notifyIfUnseen) {
+                    NoticeCheckWorker.notifyNewNotices(ctx, unnotified)
+                }
+                repository.markNoticesAsNotified(unnotified.map { it.id })
+            }
+            collectDownloadedFiles(notices, ctx) to unnotified
+        }
+
+        allNotices = notices
+        lastSyncTimeMs = System.currentTimeMillis()
+        _uiState.update {
+            it.copy(
+                isLoading = if (clearLoading) false else it.isLoading,
+                isRefreshing = if (clearRefreshing) false else it.isRefreshing,
+                notices = notices,
+                filteredNotices = filterNotices(notices, it.searchQuery, it.selectedCategory),
+                downloadedFiles = downloadedFiles,
+                error = null
+            )
+        }
+    }
+
+    private fun collectDownloadedFiles(notices: List<Notice>, ctx: Application): Map<String, File> {
+        val downloaded = mutableMapOf<String, File>()
+        notices.forEach { notice ->
+            val file = repository.getDownloadedFile(notice, ctx)
+            if (file != null) {
+                downloaded[notice.id] = file
+            }
+        }
+        return downloaded
     }
 
     fun selectCategory(category: NoticeCategory) {

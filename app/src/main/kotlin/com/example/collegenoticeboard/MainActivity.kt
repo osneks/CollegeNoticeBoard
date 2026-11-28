@@ -88,7 +88,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        CloudPushManager.startListening(this)
+        CloudPushManager.startListening(applicationContext)
     }
 
     override fun onStop() {
@@ -98,7 +98,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        CloudPushManager.stopListening()
+        // Do not stop CloudPushManager on Activity destroy (e.g., Back press or rotation);
+        // it stays active with the app process and cleans up when the OS terminates the process.
     }
 }
 

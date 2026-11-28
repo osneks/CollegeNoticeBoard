@@ -35,17 +35,18 @@ class NoticeCheckWorker(
                 .setRequiredNetworkType(NetworkType.CONNECTED)
                 .build()
 
-            // 15 minutes is the minimum interval allowed by Android WorkManager
+            // 15 minutes is the minimum interval allowed by Android WorkManager.
+            // Omit flex interval so the worker runs promptly without waiting 10-15 minutes.
+            // Use KEEP so reopening MainActivity does not reset the periodic timer.
             val workRequest = PeriodicWorkRequestBuilder<NoticeCheckWorker>(
-                15, TimeUnit.MINUTES,
-                5, TimeUnit.MINUTES
+                15, TimeUnit.MINUTES
             )
                 .setConstraints(constraints)
                 .build()
 
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                 WORK_NAME,
-                ExistingPeriodicWorkPolicy.UPDATE,
+                ExistingPeriodicWorkPolicy.KEEP,
                 workRequest
             )
         }
@@ -83,96 +84,96 @@ class NoticeCheckWorker(
                 manager.createNotificationChannel(importantChannel)
             }
         }
+
+        fun notifyNewNotices(context: Context, newNotices: List<Notice>) {
+            if (newNotices.isEmpty()) return
+            val appContext = context.applicationContext
+            createNotificationChannel(appContext)
+
+            val latestNotice = newNotices.first()
+            val intent = Intent(appContext, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                if (newNotices.size == 1 && latestNotice.noticeUrl.isNotBlank()) {
+                    putExtra("NOTICE_URL", latestNotice.noticeUrl)
+                }
+            }
+            val pendingIntent = PendingIntent.getActivity(
+                appContext,
+                (System.currentTimeMillis() % 10000).toInt(),
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val targetChannel = if (newNotices.any { it.isImportant }) IMPORTANT_CHANNEL_ID else CHANNEL_ID
+
+            val title = if (newNotices.size == 1) {
+                "New Notice: ${latestNotice.category}"
+            } else {
+                "🔔 ${newNotices.size} New College Notices"
+            }
+
+            val body = if (newNotices.size == 1) {
+                latestNotice.title
+            } else {
+                "${latestNotice.title} and ${newNotices.size - 1} other circular(s)"
+            }
+
+            val bigText = StringBuilder().apply {
+                newNotices.take(5).forEach { notice ->
+                    append("• ")
+                    append(notice.title)
+                    append("\n")
+                }
+                if (newNotices.size > 5) {
+                    append("+${newNotices.size - 5} more notices...")
+                }
+            }.toString().trimEnd()
+
+            val notification = NotificationCompat.Builder(appContext, targetChannel)
+                .setSmallIcon(R.mipmap.ic_launcher_foreground)
+                .setContentTitle(title)
+                .setContentText(body)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(bigText))
+                .setPriority(NotificationCompat.PRIORITY_HIGH) // Pop-up heads-up banner
+                .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+                .setDefaults(NotificationCompat.DEFAULT_ALL)
+                .setVibrate(longArrayOf(0, 250, 150, 250))
+                .setContentIntent(pendingIntent)
+                .setAutoCancel(true)
+                .build()
+
+            try {
+                val notificationId = if (newNotices.size == 1) {
+                    (latestNotice.id.hashCode() and 0x7FFFFFFF)
+                } else {
+                    NOTIFICATION_ID
+                }
+                NotificationManagerCompat.from(appContext)
+                    .notify(notificationId, notification)
+            } catch (e: SecurityException) {
+                // Notification permission not granted
+            }
+        }
     }
 
     override suspend fun doWork(): Result {
         return try {
+            // Catch up any ntfy push alerts sent while the app process was inactive
+            CloudPushManager.catchUpMissedMessages(applicationContext)
+
             val repository = DefaultNoticeRepository(applicationContext)
             val notices = repository.fetchNotices()
-            val seenIds = repository.getSeenNoticeIds()
+            val newNotices = repository.findUnnotifiedNewNotices(notices)
 
-            if (seenIds.isEmpty()) {
-                // Initial run: seed existing notices without triggering alert spam
-                repository.markNoticesAsSeen(notices.map { it.id })
-            } else {
-                val newNotices = notices.filter { !seenIds.contains(it.id) }
-
-                if (newNotices.isNotEmpty()) {
-                    createNotificationChannel(applicationContext)
-                    showNotification(newNotices)
-                    repository.markNoticesAsSeen(newNotices.map { it.id })
-                }
+            if (newNotices.isNotEmpty()) {
+                notifyNewNotices(applicationContext, newNotices)
+                repository.markNoticesAsNotified(newNotices.map { it.id })
+                NoticeUpdateBus.notifyUpdated()
             }
 
             Result.success()
         } catch (e: Exception) {
             Result.retry()
-        }
-    }
-
-    private fun showNotification(newNotices: List<Notice>) {
-        val latestNotice = newNotices.first()
-        val intent = Intent(applicationContext, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            if (newNotices.size == 1 && latestNotice.noticeUrl.isNotBlank()) {
-                putExtra("NOTICE_URL", latestNotice.noticeUrl)
-            }
-        }
-        val pendingIntent = PendingIntent.getActivity(
-            applicationContext,
-            (System.currentTimeMillis() % 10000).toInt(),
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val targetChannel = if (newNotices.any { it.isImportant }) IMPORTANT_CHANNEL_ID else CHANNEL_ID
-
-        val title = if (newNotices.size == 1) {
-            "New Notice: ${latestNotice.category}"
-        } else {
-            "🔔 ${newNotices.size} New College Notices"
-        }
-
-        val body = if (newNotices.size == 1) {
-            latestNotice.title
-        } else {
-            "${latestNotice.title} and ${newNotices.size - 1} other circular(s)"
-        }
-
-        val bigText = StringBuilder().apply {
-            newNotices.take(5).forEach { notice ->
-                append("• ")
-                append(notice.title)
-                append("\n")
-            }
-            if (newNotices.size > 5) {
-                append("+${newNotices.size - 5} more notices...")
-            }
-        }.toString().trimEnd()
-
-        val notification = NotificationCompat.Builder(applicationContext, targetChannel)
-            .setSmallIcon(R.mipmap.ic_launcher_foreground)
-            .setContentTitle(title)
-            .setContentText(body)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(bigText))
-            .setPriority(NotificationCompat.PRIORITY_HIGH) // Pop-up heads-up banner
-            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
-            .setDefaults(NotificationCompat.DEFAULT_ALL)
-            .setVibrate(longArrayOf(0, 250, 150, 250))
-            .setContentIntent(pendingIntent)
-            .setAutoCancel(true)
-            .build()
-
-        try {
-            val notificationId = if (newNotices.size == 1) {
-                (latestNotice.id.hashCode() and 0x7FFFFFFF)
-            } else {
-                NOTIFICATION_ID
-            }
-            NotificationManagerCompat.from(applicationContext)
-                .notify(notificationId, notification)
-        } catch (e: SecurityException) {
-            // Notification permission not granted
         }
     }
 }
