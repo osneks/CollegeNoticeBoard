@@ -26,9 +26,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
@@ -57,6 +61,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -115,6 +120,7 @@ fun MainScreen(
     val context = LocalContext.current
     var menuExpanded by remember { mutableStateOf(false) }
     var webViewNotice by remember { mutableStateOf<Notice?>(null) }
+    val lazyGridState = rememberLazyGridState()
 
     // Keep foreground sync and SSE push alive whenever the screen is active/resumed
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -160,6 +166,8 @@ fun MainScreen(
             snackbarHostState.showSnackbar(it)
         }
     }
+
+    val displayNotices = uiState.filteredNotices
 
     Scaffold(
         modifier = modifier,
@@ -380,40 +388,37 @@ fun MainScreen(
                 }
             }
 
-            // Active Filter Chip Badge
-            if (uiState.selectedCategory != NoticeCategory.ALL) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.primaryContainer,
-                        shape = RoundedCornerShape(12.dp),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                "Showing: ${uiState.selectedCategory.displayName}",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                        }
+            // Quick-Filter Category Chips
+            LazyRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 4.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(NoticeCategory.entries) { category ->
+                    val selected = uiState.selectedCategory == category
+                    val label = when (category) {
+                        NoticeCategory.IMPORTANT -> "Urgent"
+                        NoticeCategory.HIDDEN_ARCHIVE -> "Hidden"
+                        else -> category.displayName
                     }
-
-                    TextButton(onClick = { viewModel.selectCategory(NoticeCategory.ALL) }) {
-                        Text("Reset to All", style = MaterialTheme.typography.labelMedium)
-                    }
+                    FilterChip(
+                        selected = selected,
+                        onClick = { viewModel.selectCategory(category) },
+                        label = { Text(label) },
+                        leadingIcon = if (selected) {
+                            {
+                                Icon(
+                                    Icons.Filled.Check,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        } else null
+                    )
                 }
             }
-
-            val displayNotices = uiState.filteredNotices
 
             // Loading indicator
             if (uiState.isLoading) {
@@ -468,12 +473,15 @@ fun MainScreen(
                     onRefresh = { viewModel.refresh() },
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    LazyColumn(
+                    // Use LazyVerticalGrid for adaptive columns (1 column on phone, 2+ on tablet/desktop)
+                    LazyVerticalGrid(
+                        columns = GridCells.Adaptive(minSize = 360.dp),
                         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
-                        state = rememberLazyListState()
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        state = lazyGridState
                     ) {
-                        item {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
                             StatsCard(
                                 totalNotices = displayNotices.size,
                                 newNotices = uiState.notices.count { it.isNew },
@@ -481,17 +489,16 @@ fun MainScreen(
                             )
                         }
 
-                        itemsIndexed(
+                        items(
                             displayNotices,
-                            key = { _, notice -> notice.id }
-                        ) { _, notice ->
+                            key = { notice -> notice.id }
+                        ) { notice ->
                             val isDownloaded = uiState.downloadedFiles.containsKey(notice.id)
                             NoticeCard(
                                 notice = notice,
                                 isLoading = uiState.loadingNoticeIds.contains(notice.id),
                                 isDownloaded = isDownloaded,
                                 onOpenDriveOrDocs = {
-                                    // Primary classic action: Open in Google Drive / Docs without downloading!
                                     val downloaded = uiState.downloadedFiles[notice.id]
                                     if (downloaded != null && downloaded.exists()) {
                                         openDownloadedPdfInViewer(context, downloaded)
@@ -502,17 +509,14 @@ fun MainScreen(
                                     }
                                 },
                                 onDownload = {
-                                    // Option 1: Download directly to phone's public Downloads folder
                                     viewModel.downloadPdfToPublicFolder(notice) { success, msg ->
                                         Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                                     }
                                 },
                                 onOpenWebView = {
-                                    // Option 2: Open in-app WebView
                                     webViewNotice = notice
                                 },
                                 onShare = {
-                                    // Option 3: Share PDF
                                     viewModel.sharePdf(notice) { file ->
                                         sharePdf(context, file, notice.title)
                                     }
@@ -524,7 +528,9 @@ fun MainScreen(
                             )
                         }
 
-                        item { Spacer(Modifier.height(80.dp)) }
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            Spacer(Modifier.height(80.dp))
+                        }
                     }
                 }
             }
@@ -838,6 +844,12 @@ fun NoticeCard(
     onShare: () -> Unit,
     onDeleteDownloaded: () -> Unit
 ) {
+    val cardBorderColor = when {
+        notice.isImportant -> MaterialTheme.colorScheme.error.copy(alpha = 0.45f)
+        notice.isNew -> MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)
+        else -> MaterialTheme.colorScheme.outlineVariant
+    }
+
     OutlinedCard(
         onClick = onOpenDriveOrDocs, // Card tap opens directly in Google Drive / Docs!
         modifier = Modifier
@@ -852,17 +864,17 @@ fun NoticeCard(
         colors = CardDefaults.outlinedCardColors(
             containerColor = MaterialTheme.colorScheme.surface
         ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        border = BorderStroke(if (notice.isNew || notice.isImportant) 1.5.dp else 1.dp, cardBorderColor)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            // Header: Category badge + Saved badge + New badge + Date
+            // Header: Category badge + Urgent badge + Saved badge + New badge + Date
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Surface(
@@ -877,6 +889,22 @@ fun NoticeCard(
                             color = MaterialTheme.colorScheme.onTertiaryContainer,
                             fontWeight = FontWeight.SemiBold
                         )
+                    }
+
+                    if (notice.isImportant) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.4f))
+                        ) {
+                            Text(
+                                "URGENT",
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
 
                     if (isDownloaded) {

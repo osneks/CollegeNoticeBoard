@@ -13,13 +13,22 @@ android {
     targetSdk = 36
     versionCode = 1
     versionName = "1.0"
+    testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    vectorDrawables {
+      useSupportLibrary = true
+    }
   }
 
   buildTypes {
     release {
-      isMinifyEnabled = false
+      isMinifyEnabled = true
+      isShrinkResources = true
       signingConfig = signingConfigs.getByName("debug")
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+    }
+    debug {
+      isMinifyEnabled = false
+      isShrinkResources = false
     }
   }
   compileOptions {
@@ -29,13 +38,20 @@ android {
   buildFeatures {
     compose = true
     aidl = false
-    buildConfig = false
+    buildConfig = true
     shaders = false
   }
 
   packaging {
     resources {
       excludes += "/META-INF/{AL2.0,LGPL2.1}"
+    }
+  }
+
+  testOptions {
+    unitTests {
+      isIncludeAndroidResources = true
+      isReturnDefaultValues = true
     }
   }
 }
@@ -73,6 +89,9 @@ dependencies {
   // Local tests
   testImplementation(libs.junit)
   testImplementation(libs.kotlinx.coroutines.test)
+  testImplementation(libs.robolectric)
+  testImplementation(libs.mockk)
+  testImplementation(libs.truth)
 
   // Instrumented tests
   androidTestImplementation(libs.androidx.test.core)

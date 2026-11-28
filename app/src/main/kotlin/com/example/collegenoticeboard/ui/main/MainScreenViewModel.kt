@@ -13,6 +13,7 @@ import com.example.collegenoticeboard.data.NoticeCategory
 import com.example.collegenoticeboard.data.NoticeCheckWorker
 import com.example.collegenoticeboard.data.NoticeRepository
 import com.example.collegenoticeboard.data.NoticeUpdateBus
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -37,9 +38,31 @@ data class MainScreenUiState(
     val downloadedFiles: Map<String, File> = emptyMap()
 )
 
-class MainScreenViewModel(application: Application) : AndroidViewModel(application) {
+class MainScreenViewModel private constructor(
+    application: Application,
+    private val repository: NoticeRepository,
+    private val ioDispatcher: CoroutineDispatcher,
+    autoStart: Boolean
+) : AndroidViewModel(application) {
 
-    private val repository: NoticeRepository = DefaultNoticeRepository(application)
+    constructor(application: Application) : this(
+        application = application,
+        repository = DefaultNoticeRepository(application),
+        ioDispatcher = Dispatchers.IO,
+        autoStart = true
+    )
+
+    internal constructor(
+        application: Application,
+        repository: NoticeRepository,
+        ioDispatcher: CoroutineDispatcher = Dispatchers.IO
+    ) : this(
+        application = application,
+        repository = repository,
+        ioDispatcher = ioDispatcher,
+        autoStart = false
+    )
+
     private var allNotices: List<Notice> = emptyList()
     private var lastSyncTimeMs: Long = 0L
     private var foregroundSyncJob: Job? = null
@@ -49,10 +72,12 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
     val uiState: StateFlow<MainScreenUiState> = _uiState.asStateFlow()
 
     init {
-        // Instant startup: load cached notices immediately if available
-        loadCachedNotices()
-        // Then perform network sync
-        loadNotices()
+        if (autoStart) {
+            // Instant startup: load cached notices immediately if available
+            loadCachedNotices()
+            // Then perform network sync
+            loadNotices()
+        }
         // Auto-refresh UI whenever CloudPushManager or NoticeCheckWorker receives new circulars
         viewModelScope.launch {
             NoticeUpdateBus.updates.collect {
@@ -158,7 +183,7 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
         clearRefreshing: Boolean = false
     ) {
         val ctx = getApplication<Application>()
-        val (downloadedFiles, newUnnotified) = withContext(Dispatchers.IO) {
+        val (downloadedFiles, newUnnotified) = withContext(ioDispatcher) {
             val unnotified = repository.findUnnotifiedNewNotices(notices)
             if (unnotified.isNotEmpty()) {
                 if (notifyIfUnseen) {
@@ -403,7 +428,7 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun markAllAsSeen() {
-        viewModelScope.launch(Dispatchers.IO) {
+        viewModelScope.launch(ioDispatcher) {
             val allIds = allNotices.map { it.id }
             repository.markNoticesAsSeen(allIds)
             withContext(Dispatchers.Main) {

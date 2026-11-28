@@ -2,10 +2,149 @@ package com.example.collegenoticeboard.ui.main
 
 import com.example.collegenoticeboard.data.Notice
 import com.example.collegenoticeboard.data.NoticeCategory
+import com.example.collegenoticeboard.data.NoticeRepository
+import com.google.common.truth.Truth.assertThat
+import io.mockk.Runs
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.just
+import io.mockk.mockk
+import io.mockk.verify
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
+
+@OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], application = android.app.Application::class)
+class MainScreenViewModelTest {
+
+    private val testDispatcher = StandardTestDispatcher()
+    private lateinit var mockRepository: NoticeRepository
+    private lateinit var viewModel: MainScreenViewModel
+
+    @Before
+    fun setup() {
+        Dispatchers.setMain(testDispatcher)
+        mockRepository = mockk(relaxed = true)
+        viewModel = MainScreenViewModel(
+            application = RuntimeEnvironment.getApplication(),
+            repository = mockRepository,
+            ioDispatcher = testDispatcher
+        )
+    }
+
+    @After
+    fun tearDown() {
+        Dispatchers.resetMain()
+    }
+
+    @Test
+    fun testInitialState_isLoading() = runTest(testDispatcher) {
+        assertThat(viewModel.uiState.value.isLoading).isTrue()
+    }
+
+    @Test
+    fun testLoadNotices_updatesState() = runTest(testDispatcher) {
+        val notices = listOf(
+            Notice("1", "Notice 1", "01 Jan 2025", "All Notices", "url1", "", isNew = true),
+            Notice("2", "Notice 2", "02 Jan 2025", "Exam", "url2", "", isNew = false)
+        )
+        coEvery { mockRepository.fetchNotices(NoticeCategory.ALL) } returns notices
+        every { mockRepository.loadCachedNotices() } returns emptyList()
+        every { mockRepository.findUnnotifiedNewNotices(notices) } returns emptyList()
+        every { mockRepository.getDownloadedFile(any(), any()) } returns null
+
+        viewModel.loadNotices()
+        advanceUntilIdle()
+
+        assertThat(viewModel.uiState.value.isLoading).isFalse()
+        assertThat(viewModel.uiState.value.notices).hasSize(2)
+        assertThat(viewModel.uiState.value.filteredNotices).hasSize(2)
+    }
+
+    @Test
+    fun testSelectCategory_filtersNotices() = runTest(testDispatcher) {
+        val notices = listOf(
+            Notice("1", "Notice 1", "01 Jan 2025", "All Notices", "url1", ""),
+            Notice("2", "Exam Notice", "02 Jan 2025", "Exam", "url2", ""),
+            Notice("3", "Admission Notice", "03 Jan 2025", "Admission", "url3", "")
+        )
+        coEvery { mockRepository.fetchNotices(NoticeCategory.ALL) } returns notices
+        every { mockRepository.loadCachedNotices() } returns emptyList()
+        every { mockRepository.findUnnotifiedNewNotices(notices) } returns emptyList()
+        every { mockRepository.getDownloadedFile(any(), any()) } returns null
+
+        viewModel.loadNotices()
+        advanceUntilIdle()
+
+        viewModel.selectCategory(NoticeCategory.EXAM)
+
+        assertThat(viewModel.uiState.value.selectedCategory).isEqualTo(NoticeCategory.EXAM)
+        assertThat(viewModel.uiState.value.filteredNotices).hasSize(1)
+        assertThat(viewModel.uiState.value.filteredNotices[0].category).isEqualTo("Exam")
+    }
+
+    @Test
+    fun testUpdateSearchQuery_filtersNotices() = runTest(testDispatcher) {
+        val notices = listOf(
+            Notice("1", "College Holiday", "01 Jan 2025", "All Notices", "url1", ""),
+            Notice("2", "Exam Schedule", "02 Jan 2025", "Exam", "url2", ""),
+            Notice("3", "Admission Form", "03 Jan 2025", "Admission", "url3", "")
+        )
+        coEvery { mockRepository.fetchNotices(NoticeCategory.ALL) } returns notices
+        every { mockRepository.loadCachedNotices() } returns emptyList()
+        every { mockRepository.findUnnotifiedNewNotices(notices) } returns emptyList()
+        every { mockRepository.getDownloadedFile(any(), any()) } returns null
+
+        viewModel.loadNotices()
+        advanceUntilIdle()
+
+        viewModel.updateSearchQuery("Exam")
+
+        assertThat(viewModel.uiState.value.searchQuery).isEqualTo("Exam")
+        assertThat(viewModel.uiState.value.filteredNotices).hasSize(1)
+        assertThat(viewModel.uiState.value.filteredNotices[0].title).contains("Exam")
+    }
+
+    @Test
+    fun testMarkAllAsSeen_clearsNewBadges() = runTest(testDispatcher) {
+        val notices = listOf(
+            Notice("1", "Notice 1", "01 Jan 2025", "All Notices", "url1", "", isNew = true),
+            Notice("2", "Notice 2", "02 Jan 2025", "Exam", "url2", "", isNew = true)
+        )
+        coEvery { mockRepository.fetchNotices(NoticeCategory.ALL) } returns notices
+        every { mockRepository.loadCachedNotices() } returns emptyList()
+        every { mockRepository.findUnnotifiedNewNotices(notices) } returns emptyList()
+        every { mockRepository.getDownloadedFile(any(), any()) } returns null
+        every { mockRepository.markNoticesAsSeen(any()) } just Runs
+
+        viewModel.loadNotices()
+        advanceUntilIdle()
+
+        assertThat(viewModel.uiState.value.notices.count { it.isNew }).isEqualTo(2)
+
+        viewModel.markAllAsSeen()
+        advanceUntilIdle()
+
+        assertThat(viewModel.uiState.value.notices.count { it.isNew }).isEqualTo(0)
+        verify { mockRepository.markNoticesAsSeen(listOf("1", "2")) }
+    }
+}
 
 class NoticeModelTest {
 
@@ -39,7 +178,6 @@ class NoticeModelTest {
 
     @Test
     fun testDistinctByIdPreservesMultipleAllotmentLists() {
-        // Reproduce real college scenario where 2 distinct allotment lists share the title
         val notices = listOf(
             Notice("NMID_78", "3-Year B.Sc (Gen) PHYSICS Practical Exam", "31Dec2026", "Exam", "", ""),
             Notice("NMID_80", "3-Year B.Sc (Gen) PHYSICS Practical Exam", "31Dec2026", "Exam", "", "")
@@ -66,7 +204,7 @@ class NoticeModelTest {
         val archivedNotice = Notice(
             id = "NMID_78",
             title = "Old Physics Exam",
-            date = "31Dec2026", // Future typo date in archive
+            date = "31Dec2026",
             category = "Exam",
             noticeUrl = "",
             pdfUrl = "",

@@ -1,26 +1,74 @@
 package com.example.collegenoticeboard.ui.main
 
 import androidx.activity.ComponentActivity
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
-import org.junit.Before
+import androidx.compose.ui.test.performClick
+import com.example.collegenoticeboard.ui.theme.CollegeNoticeBoardTheme
 import org.junit.Rule
 import org.junit.Test
 
 /** UI tests for [com.example.collegenoticeboard.ui.main.MainScreen]. */
 class MainScreenTest {
 
-  @get:Rule val composeTestRule = createAndroidComposeRule<ComponentActivity>()
+    @get:Rule
+    val composeTestRule = createAndroidComposeRule<ComponentActivity>()
 
-  @Before
-  fun setup() {
-    composeTestRule.setContent { MainScreen(FAKE_DATA) }
-  }
+    @Test
+    fun testAppTitleDisplayed() {
+        composeTestRule.setContent {
+            CollegeNoticeBoardTheme {
+                MainScreen(onItemClick = {})
+            }
+        }
+        composeTestRule.onNodeWithText("College Notice Board").assertIsDisplayed()
+    }
 
-  @Test
-  fun firstItem_exists() {
-    FAKE_DATA.forEach { composeTestRule.onNodeWithText("Hello $it!").assertExists() }
-  }
+    @Test
+    fun testSearchFieldDisplayed() {
+        composeTestRule.setContent {
+            CollegeNoticeBoardTheme {
+                MainScreen(onItemClick = {})
+            }
+        }
+        composeTestRule.onNodeWithText("Search all notices...").assertIsDisplayed()
+    }
+
+    @Test
+    fun testFilterButtonDisplayed() {
+        composeTestRule.setContent {
+            CollegeNoticeBoardTheme {
+                MainScreen(onItemClick = {})
+            }
+        }
+        composeTestRule.onNodeWithContentDescription("Filter Menu").assertIsDisplayed()
+    }
+
+    @Test
+    fun testRefreshButtonDisplayed() {
+        composeTestRule.setContent {
+            CollegeNoticeBoardTheme {
+                MainScreen(onItemClick = {})
+            }
+        }
+        composeTestRule.onNodeWithContentDescription("Refresh").assertIsDisplayed()
+    }
+
+    @Test
+    fun testFilterMenuOpensOnClick() {
+        composeTestRule.setContent {
+            CollegeNoticeBoardTheme {
+                MainScreen(onItemClick = {})
+            }
+        }
+        composeTestRule.onNodeWithContentDescription("Filter Menu").performClick()
+        composeTestRule.onNodeWithText("All Notices").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Urgent & Important").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Admission").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Exam").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Tender").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Hidden Notices").assertIsDisplayed()
+    }
 }
-
-private val FAKE_DATA = listOf("Sample1", "Sample2", "Sample3")
